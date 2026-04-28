@@ -22,6 +22,7 @@ Hệ thống bao gồm 4 layer chính:
 │                                                                  │
 │  ┌──────────────────────────────┐   ┌──────────────────────────┐ │
 │  │  Web App (React/Next.js)     │   │ Mobile App (Flutter)     │ │
+│  │                              │   │ - Login/Register         │ │
 │  │  - Student Dashboard         │   │ - QR Scan Check-in       │ │
 │  │  - Admin Panel               │   │ - Offline Data Sync      │ │
 │  │  - Login/Register            │   │ - Local SQLite DB        │ │
@@ -135,6 +136,7 @@ Chịu trách nhiệm:
 **Workshop Service**
 - GET /workshops (danh sách workshop)
 - GET /workshops/{id} (chi tiết workshop)
+- GET /workshops/{id}/participants (lấy số lượng sinh viên đăng ký - admin)
 - POST /workshops (tạo workshop - admin)
 - PUT /workshops/{id} (sửa workshop - admin)
 - DELETE /workshops/{id} (hủy workshop - admin)
@@ -252,7 +254,7 @@ CREATE TABLE workshops (
     status VARCHAR(20) NOT NULL DEFAULT 'active'
         CHECK (status IN ('active', 'cancelled', 'completed')),
     registration_open_at TIMESTAMP NOT NULL,
-    registration_close_at TIMESTAMP,
+    registration_close_at TIMESTAMP NOT NULL,
     created_by UUID NOT NULL REFERENCES users(id),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -352,7 +354,7 @@ CREATE TABLE checkins (
     checkin_time TIMESTAMP NOT NULL,
     device_id VARCHAR(255),
     location VARCHAR(100),
-    is_synced BOOLEAN DEFAULT TRUE,
+    is_synced BOOLEAN DEFAULT FALSE,
     synced_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     
