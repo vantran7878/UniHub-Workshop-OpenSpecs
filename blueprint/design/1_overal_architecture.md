@@ -15,7 +15,7 @@ UniHub Workshop được thiết kế theo kiến trúc **Microservices kết h�
 | **API Gateway** | Điểm vào duy nhất, xác thực JWT, rate limiting, routing | Kong / AWS API Gateway |
 | **Student Web App** | SPA cho sinh viên: xem lịch, đăng ký, quản lý vé | React + Next.js |
 | **Admin Web App** | Trang quản trị nội bộ: tạo/sửa/hủy workshop, thống kê | React + Next.js |
-| **Mobile App (Check-in)** | App quét QR cho nhân sự tại cửa phòng, hoạt động offline | React Native |
+| **Mobile App (Check-in)** | App quét QR cho nhân sự tại cửa phòng, hoạt động offline | Flutter |
 | **Workshop Service** | CRUD workshop, quản lý slot, thông tin phòng | Node.js / Spring Boot |
 | **Registration Service** | Xử lý đăng ký, chống race condition, phát sinh QR | Node.js |
 | **Payment Service** | Tích hợp cổng thanh toán, idempotency, Circuit Breaker | Node.js |
