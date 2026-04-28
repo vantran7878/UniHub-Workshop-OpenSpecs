@@ -47,33 +47,32 @@ Hệ thống bao gồm 4 layer chính:
 │         │            │   Generator  │              │             │
 │         └────────────┼──────────────┼──────────────┘             │
 │                      │              │                            │
-│  ┌────────────────┐  │  ┌──────────────┐  ┌──────────────────┐   │
-│  │ Payment Service│  │  │ Check-in     │  │ Notification     │   │
-│  │                │  │  │ Service      │  │ Service          │   │
-│  │ - Process Pay. │  │  │              │  │                  │   │
-│  │ - Verify Idem. │  │  │ - Record     │  │ - Send via App   │   │
-│  │ - Handle 3DS   │  │  │ - Offline    │  │ - Send via Email │   │
-│  │                │  │  │   Handling   │  │ - Send via SMS   │   │
-│  └────────┬───────┘  │  │ - Sync to DB │  │ - Queue Events   │   │
-│           │          │  └──────────────┘  └──────────────────┘   │
-│           │          │         │                    │            │
-│           └──────────┼─────────┼────────────────────┘            │
-│                      │         │                                 │
-└──────────────────────┼─────────┼─────────────────────────────────┘
-                       │         │
-                       │ (REST + gRPC - internal only)
-                       │         │
-         ┌─────────────▼─────────▼───────────┐
-         │   Message Broker (RabbitMQ)       │
-         ├───────────────────────────────────┤
-         │ Queues:                           │
-         │ - payment.process                 │
-         │ - payment.callback                │
-         │ - notification.queue              │
-         │ - checkin.sync                    │
-         │ - csv.import                      │
-         │ - ai_summary.generate             │
-         └─────────────┬───────────────────┬─┘
+│  ┌──────────────────────────────┐  ┌──────────────┐  ┌────────────────────┐  │
+│  │ Payment Service (SYNC)       │  │ Check-in     │  │ Notification       │  │
+│  │                              │  │ Service      │  │ Service            │  │
+│  │ - Called directly by Reg.Svc │  │              │  │                    │  │
+│  │ - Call payment gateway sync  │  │ - Record     │  │ - Send via App     │  │
+│  │ - Verify idempotency key     │  │ - Offline    │  │ - Send via Email   │  │
+│  │ - Circuit breaker            │  │   Handling   │  │ - Send via SMS     │  │
+│  │ - Return SUCCESS/FAILED      │  │ - Sync to DB │  │ - Queue Events     │  │
+│  └──────────────────────────────┘  └──────────────┘  └────────────────────┘  │
+│  ⚠ Registration CONFIRMED chỉ khi Payment trả về SUCCESS                     │
+│  ⚠ Payment FAILED → Registration PENDING/FAILED, không giữ slot              │
+│                               │         │                                    │
+└───────────────────────────────┼─────────┼────────────────────────────────────┘
+                                │         │
+                                │ (REST + gRPC - internal only)
+                                │         │
+         ┌──────────────────────▼─────────▼─────────┐
+         │         Message Broker (RabbitMQ)        │
+         ├──────────────────────────────────────────┤
+         │ Queues:                                  │
+         │ - notification.queue                     │
+         │ - checkin.sync                           │
+         │ - csv.import                             │
+         │ - ai_summary.generate                    │
+         │ (Removed: payment.process, payment.callback - now synchronous) │
+         └─────────────┬──────────────────────────┬─┘
                        │                   │
 ┌──────────────────────┼───────────────────┼──────────────────────┐
 │              DATA PERSISTENCE LAYER                             │
@@ -104,6 +103,7 @@ Hệ thống bao gồm 4 layer chính:
 
 **Mobile App (Flutter)**
 - Nhân sự: quét QR code để check-in
+- Sinh viên: lấy mã QR để check-in
 - Hỗ trợ offline mode: SQLite local database lưu registration list
 - Khi mất mạng: check-in được ghi nhận local
 - Khi có mạng: tự động sync với server
@@ -137,14 +137,18 @@ Chịu trách nhiệm:
 - GET /my-registrations (xem những đơn đăng ký của mình)
 - POST /registrations/{id}/cancel (hủy đơn)
 - Xử lý race condition: 2 user cùng đăng ký 1 chỗ cuối cùng
-- Gửi event tới message broker khi registration success
+- Gọi **Payment Service trực tiếp (đồng bộ)** trước khi xác nhận đăng ký
+- Registration chỉ chuyển sang trạng thái `CONFIRMED` khi Payment trả về `SUCCESS`
+- Payment thất bại → Registration ở trạng thái `FAILED`, không giữ slot
+- Sau khi CONFIRMED, gửi event tới message broker để notification service gửi email/push
 
 **Payment Service**
-- Consume event từ message queue (payment.process)
-- Call payment gateway với idempotency key
-- Xử lý timeout (check transaction status)
-- Circuit breaker: nếu gateway fail nhiều lần → OPEN
-- Graceful degradation: khi gateway down, free workshop vẫn available
+- Được gọi **trực tiếp (đồng bộ)** từ Registration Service qua REST/gRPC nội bộ
+- Gọi payment gateway và chờ kết quả, trả về `SUCCESS` hoặc `FAILED` ngay trong cùng request
+- Verify idempotency key trước khi gọi gateway (tránh double charge khi retry)
+- Xử lý timeout: nếu gateway không phản hồi → trả về `FAILED`
+- Circuit breaker: nếu gateway fail nhiều lần → OPEN, trả về lỗi ngay (không gọi gateway)
+- Graceful degradation: khi gateway down, free workshop vẫn available (bypass payment)
 
 **Check-in Service**
 - POST /checkin (quét QR online)
@@ -160,9 +164,9 @@ Chịu trách nhiệm:
 
 **RabbitMQ** - xử lý asynchronous tasks
 
+> **Lưu ý**: `payment.process` và `payment.callback` đã bị loại bỏ. Payment giờ là **đồng bộ** — Registration Service gọi trực tiếp Payment Service và chờ kết quả trước khi xác nhận đăng ký.
+
 **Queues:**
-- `payment.process` - registration service publish → payment service consume
-- `payment.callback` - payment gateway webhook → payment service consume
 - `notification.queue` - event sources → notification service consume
 - `checkin.sync` - mobile app → check-in service consume
 - `csv.import` - scheduled task → auth service consume
