@@ -213,53 +213,56 @@ Mobile App                API Gateway           Check-in Service           Postg
 **Phạm vi:** Từ khi cron job khởi chạy đến khi dữ liệu sinh viên được cập nhật trong DB.
 
 ```
-Cron Scheduler     Sync Worker         S3 Storage        Redis        PostgreSQL
-      │                 │                  │               │              │
-      │── Trigger 2AM ─►│                  │               │              │
-      │                 │                  │               │              │
-      │                 │── SET lock:csv ─►│               │              │
-      │                 │◄─── OK (EX 300) ─│               │              │
-      │                 │                  │               │              │
-      │                 │── Get File ─────►│               │              │
-      │                 │◄─ stream content │               │              │
-      │                 │                  │               │              │
-      │                 │ [Validations]    │               │              │
-      │                 │ • Schema/Header  │               │              │
-      │                 │ • UTF-8/Hash     │               │              │
-      │                 │                  │               │              │
-      │                 │── SELECT hash ───┼───────────────┼─────────────►│
-      │                 │◄─ EMPTY (New) ───┼───────────────┼─────────────┤
-      │                 │                  │               │              │
-      │                 │ [Parse & Group]  │               │              │
-      │                 │ • Unique records │               │              │
-      │                 │                  │               │              │
-      │                 │── BEGIN TRANS ───┼───────────────┼─────────────►│
-      │                 │                  │               │              │
-      │                 │── UPSERT Users ──┼───────────────┼─────────────►│
-      │                 │ (Conflict Update)│               │              │
-      │                 │                  │               │              │
-      │                 │── Set Inactive ──┼───────────────┼─────────────►│
-      │                 │ (Soft Delete)    │               │              │
-      │                 │                  │               │              │
-      │                 │── COMMIT ────────┼───────────────┼─────────────►│
-      │                 │                  │               │              │
-      │                 │── Insert Log ────┼───────────────┼─────────────►│
-      │                 │                  │               │              │
-      │                 │── DEL lock:csv ─►│               │              │
-      │                 │                  │               │              │
-      │◄───── DONE ─────│                  │               │              │
+Cron Scheduler      Sync Worker             Redis             PostgreSQL
+      │                   │                   │                   │
+      │── Trigger 2AM ───►│                   │                   │
+      │                   │                   │                   │
+      │                   │── SET lock:csv ──►│                   │
+      │                   │◄─── OK (EX 300) ──│                   │
+      │                   │                   │                   │
+      │                   │── Check File ─────┼───────────────────┤
+      │                   │   (Local Path)    │                   │
+      │                   │                   │                   │
+      │                   │── Read & Stream ──┼───────────────────┤
+      │                   │   .csv content    │                   │
+      │                   │                   │                   │
+      │                   │ [Validations]     │                   │
+      │                   │ • Schema/Header   │                   │
+      │                   │ • UTF-8/Hash      │                   │
+      │                   │                   │                   │
+      │                   │── SELECT hash ────┼──────────────────►│
+      │                   │◄─ EMPTY (New) ────┼──────────────────┤
+      │                   │                   │                   │
+      │                   │ [Parse & Group]   │                   │
+      │                   │ • Unique records  │                   │
+      │                   │                   │                   │
+      │                   │── BEGIN TRANS ────┼──────────────────►│
+      │                   │                   │                   │
+      │                   │── UPSERT Users ───┼──────────────────►│
+      │                   │ (Conflict Update) │                   │
+      │                   │                   │                   │
+      │                   │── Set Inactive ───┼──────────────────►│
+      │                   │ (Soft Delete)     │                   │
+      │                   │                   │                   │
+      │                   │── COMMIT ─────────┼──────────────────►│
+      │                   │                   │                   │
+      │                   │── Insert Log ─────┼──────────────────►│
+      │                   │                   │                   │
+      │                   │── DEL lock:csv ──►│                   │
+      │                   │                   │                   │
+      │◄───── DONE ───────│                   │                   │
 ```
 
 #### 5.3.1 Bảng xử lý lỗi
 
 | Tình huống | Hành động |
 |---|---|
-| File CSV không tồn tại trên S3 | Ghi log `status='failed'`, gửi alert email cho ban tổ chức. Không thay đổi DB. |
-| File đã được import (hash trùng) | Bỏ qua toàn bộ, ghi log `status='skipped'`. Không duplicate dữ liệu. |
-| File sai cấu trúc (thiếu cột header) | Dừng ngay, không parse, ghi `status='failed'` + `error_detail`. |
-| Dòng dữ liệu lỗi (email sai format) | Bỏ qua dòng đó, tăng counter `errors`, tiếp tục các dòng còn lại. Ghi detail vào `error_details` (JSONB). |
-| DB lỗi giữa transaction | `ROLLBACK` toàn bộ batch. Retry sau 5 phút, tối đa 3 lần. Nếu vẫn lỗi → alert. |
-| Import job đang chạy (lock tồn tại) | Skip ngay (lock:csv_import SET NX fail). Tránh chạy 2 job song song. |
-| Sinh viên có trong DB nhưng không có trong CSV mới | Đặt `is_active = FALSE`. Sinh viên này không thể đăng ký thêm workshop mới. Đăng ký cũ không bị xóa. |
-
+| File CSV không tồn tại |Kiểm tra đường dẫn thư mục. Nếu không thấy file, ghi log status='failed', gửi alert email cho ban quản trị. Không thay đổi dữ liệu DB. |
+| Lỗi quyền truy cập file | Nếu Worker không có quyền đọc (Permission denied), ghi log lỗi hệ thống và gửi cảnh báo kỹ thuật để kiểm tra cấu quyền thư mục. |
+| File đã được import | So sánh mã Hash của file hiện tại với lịch sử trong DB. Nếu trùng, ghi log status='skipped'. Tránh xử lý lặp lại. |
+| File sai cấu trúc | Kiểm tra dòng tiêu đề (Header). Nếu thiếu cột bắt buộc, dừng ngay lập tức, ghi status='failed' kèm chi tiết lỗi cấu trúc. |
+| Dòng dữ liệu lỗi | Nếu một dòng sai định dạng (ví dụ: email không hợp lệ), bỏ qua dòng đó, tăng biến đếm errors và tiếp tục dòng tiếp theo. Ghi chi tiết vào error_details (JSONB). |
+| DB lỗi giữa chừng | Kích hoạt ROLLBACK toàn bộ Batch đang xử lý để đảm bảo tính nhất quán. Thực hiện Retry tối đa 3 lần. |
+| Job bị trùng lặp | Nếu Redis Lock vẫn tồn tại (do job trước chưa xong), job mới sẽ tự động Skip để tránh xung đột tài nguyên và dữ liệu. |
+| Hòa nhập dữ liệu (Sync) | Sinh viên có trong DB nhưng không xuất hiện trong file CSV mới nhất sẽ được đánh dấu is_active = FALSE thay vì xóa vật lý. |
 ---
