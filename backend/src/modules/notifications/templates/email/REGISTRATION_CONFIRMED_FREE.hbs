@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px; }
+        .header { text-align: center; border-bottom: 2px solid #007bff; padding-bottom: 10px; margin-bottom: 20px; }
+        .content { margin-bottom: 20px; }
+        .footer { font-size: 0.8em; color: #777; text-align: center; border-top: 1px solid #eee; padding-top: 10px; }
+        .qr-section { background: #f9f9f9; padding: 15px; text-align: center; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>Đăng ký Workshop thành công!</h2>
+        </div>
+        <div class="content">
+            <p>Chào <strong>{{userName}}</strong>,</p>
+            <p>Bạn đã đăng ký thành công workshop sau:</p>
+            <ul>
+                <li><strong>Workshop:</strong> {{workshopTitle}}</li>
+                <li><strong>Thời gian:</strong> {{workshopDate}}</li>
+                <li><strong>Phòng:</strong> {{workshopRoom}}</li>
+                <li><strong>Diễn giả:</strong> {{speakerName}}</li>
+            </ul>
+            <div class="qr-section">
+                <p>Mã QR tham dự của bạn:</p>
+                <code style="font-size: 1.2em; color: #007bff;">{{qrCode}}</code>
+                <p>Vui lòng trình mã này tại cửa phòng để check-in.</p>
+            </div>
+            <p>Xem chi tiết tại: <a href="{{baseUrl}}/workshops/{{workshopId}}">Trang workshop</a></p>
+        </div>
+        <div class="footer">
+            <p>Đây là email tự động từ hệ thống UniHub Workshop.</p>
+            <p>Ban Tổ Chức UniHub</p>
+        </div>
+    </div>
+</body>
+</html>
