@@ -14,6 +14,7 @@ import {
 import { publishJson } from "../../rabbitmq/client.js";
 import { invalidateWorkshopCaches } from "./workshopCache.js";
 import { assertRegistrationWindow, createWorkshopBodySchema, updateWorkshopBodySchema } from "./workshopValidators.js";
+import { summaryRouter } from "./summaryRouter.js";
 
 function cacheKey(prefix: string, obj: unknown) {
   const h = crypto.createHash("sha256").update(JSON.stringify(obj)).digest("hex").slice(0, 24);
@@ -503,6 +504,8 @@ export function workshopRouter() {
     await redis.set(key, JSON.stringify(body), "EX", 300);
     return res.json(body);
   });
+
+  router.use("/:id", summaryRouter());
 
   return router;
 }

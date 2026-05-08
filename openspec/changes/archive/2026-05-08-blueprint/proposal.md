@@ -37,7 +37,7 @@ UniHub Workshop được xây dựng để số hóa toàn bộ vòng đời c�
 Nhóm người dùng đông nhất và cũng là điểm tạo tải lớn nhất cho hệ thống. Nhu cầu cốt lõi:
 - Xem toàn bộ lịch workshop trong tuần, bao gồm thông tin diễn giả, phòng tổ chức, sơ đồ phòng và số chỗ còn lại theo thời gian thực.
 - Đăng ký tham dự — cả workshop miễn phí lẫn có phí — và nhận mã QR để check-in.
-- Nhận thông báo xác nhận qua app và email ngay sau khi đăng ký thành công.
+- Nhận thông báo xác nhận qua trình duyệt (Web Push) và email ngay sau khi đăng ký thành công.
 
 Điều quan trọng nhất với sinh viên: **tốc độ và sự công bằng** — ai đăng ký trước thì được chỗ, và kết quả phải rõ ràng ngay lập tức.
 

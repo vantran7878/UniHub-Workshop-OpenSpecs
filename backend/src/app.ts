@@ -4,6 +4,7 @@ import helmet from "helmet";
 import { getPool } from "./db/pool.js";
 import { authRouter } from "./modules/auth/authRouter.js";
 import { bookingRouter } from "./modules/booking/bookingRouter.js";
+import { checkinRouter } from "./modules/checkin/checkinRouter.js";
 import { sandboxRouter } from "./modules/payment/sandboxRouter.js";
 import { workshopRouter } from "./modules/workshops/workshopRouter.js";
 
@@ -27,6 +28,7 @@ export function createApp() {
 
   app.use("/api/auth", authRouter());
   app.use("/api/workshops", workshopRouter());
+  app.use("/api/checkin", checkinRouter());
   app.use("/api", bookingRouter());
   app.use("/sandbox", sandboxRouter());
 
