@@ -3,6 +3,7 @@ require('dotenv').config();
 const authRoutes = require('./src/routes/authRoutes');
 const checkinRoutes = require('./src/routes/checkinRoutes');
 const summaryRoutes = require('./src/routes/summaryRoutes');
+const userRoutes = require('./src/routes/userRoutes');
 const { verifyJWT, checkBlacklist, loadUser, requireRole } = require('./src/middleware/authMiddleware');
 const { connectRabbitMQ } = require('./src/config/rabbitmq');
 
@@ -15,6 +16,7 @@ app.use('/api/auth', authRoutes);
 // Protected routes
 app.use('/api/checkin', checkinRoutes);
 app.use('/api/workshops', summaryRoutes);
+app.use('/api/users', userRoutes);
 
 // Initialize RabbitMQ
 connectRabbitMQ().catch(err => console.error('RabbitMQ initial connection failed:', err));
