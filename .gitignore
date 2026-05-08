@@ -25,3 +25,5 @@ backend/keys/*.pem
 # OS / editor
 .DS_Store
 .idea/
+/.agent
+/.claude
