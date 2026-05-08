@@ -1,13 +1,23 @@
 const express = require('express');
 require('dotenv').config();
 const authRoutes = require('./src/routes/authRoutes');
+const checkinRoutes = require('./src/routes/checkinRoutes');
+const summaryRoutes = require('./src/routes/summaryRoutes');
 const { verifyJWT, checkBlacklist, loadUser, requireRole } = require('./src/middleware/authMiddleware');
+const { connectRabbitMQ } = require('./src/config/rabbitmq');
 
 const app = express();
 app.use(express.json());
 
 // Public routes
 app.use('/api/auth', authRoutes);
+
+// Protected routes
+app.use('/api/checkin', checkinRoutes);
+app.use('/api/workshops', summaryRoutes);
+
+// Initialize RabbitMQ
+connectRabbitMQ().catch(err => console.error('RabbitMQ initial connection failed:', err));
 
 // Protected example route
 app.get('/api/admin/dashboard', 
