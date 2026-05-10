@@ -2,6 +2,9 @@ import crypto from "node:crypto";
 import { randomUUID } from "node:crypto";
 import express from "express";
 import { z } from "zod";
+import multer from "multer";
+import fs from "fs/promises";
+import path from "path";
 import { getPool } from "../../db/pool.js";
 import { getRedis } from "../../redis/client.js";
 import {
@@ -15,6 +18,18 @@ import { publishJson } from "../../rabbitmq/client.js";
 import { invalidateWorkshopCaches } from "./workshopCache.js";
 import { assertRegistrationWindow, createWorkshopBodySchema, updateWorkshopBodySchema } from "./workshopValidators.js";
 
+const upload = multer({
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype !== 'application/pdf') {
+      return cb(new Error("INVALID_FILE_TYPE"));
+    }
+    cb(null, true);
+  }
+});
+
+const authHandlers = [extractAndVerifyJwt, checkJwtBlacklistFailOpen, loadUser];
+
 function cacheKey(prefix: string, obj: unknown) {
   const h = crypto.createHash("sha256").update(JSON.stringify(obj)).digest("hex").slice(0, 24);
   return `${prefix}:${h}`;
@@ -24,14 +39,6 @@ function clientMeta(req: AuthedRequest) {
   const ip = req.ip ?? req.socket.remoteAddress ?? undefined;
   const userAgent = req.get("user-agent") ?? undefined;
   return { ip_address: ip ?? null, user_agent: userAgent ?? null };
-}
-
-async function countConfirmed(pool: ReturnType<typeof getPool>, workshopId: string) {
-  const r = await pool.query<{ n: string }>(
-    "select count(*)::text as n from registrations where workshop_id = $1 and status = 'confirmed'",
-    [workshopId]
-  );
-  return Number(r.rows[0]?.n ?? 0);
 }
 
 function mapWorkshopRow(w: Record<string, unknown>) {
@@ -49,8 +56,7 @@ function mapWorkshopRow(w: Record<string, unknown>) {
 export function workshopRouter() {
   const router = express.Router();
 
-  router.use(extractAndVerifyJwt, checkJwtBlacklistFailOpen, loadUser);
-
+  // Public listing
   router.get("/", async (req, res) => {
     const query = z
       .object({
@@ -97,7 +103,8 @@ export function workshopRouter() {
     return res.json(body);
   });
 
-  router.get("/statistics", requireRole("admin"), async (_req, res) => {
+  // Protected admin stats
+  router.get("/statistics", ...authHandlers, requireRole("admin"), async (_req, res) => {
     const redis = getRedis();
     const cacheKeyStats = "workshop:statistics";
     const cached = await redis.get(cacheKeyStats);
@@ -129,7 +136,8 @@ export function workshopRouter() {
     return res.json(body);
   });
 
-  router.post("/", requireRole("admin"), async (req: AuthedRequest, res) => {
+  // Protected creation
+  router.post("/", ...authHandlers, requireRole("admin"), async (req: AuthedRequest, res) => {
     const parsed = createWorkshopBodySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ code: "INVALID_INPUT", details: parsed.error.flatten() });
 
@@ -178,7 +186,8 @@ export function workshopRouter() {
     return res.status(201).json(mapWorkshopRow(row as Record<string, unknown>));
   });
 
-  router.put("/:id", requireRole("admin"), async (req: AuthedRequest, res) => {
+  // Protected update
+  router.put("/:id", ...authHandlers, requireRole("admin"), async (req: AuthedRequest, res) => {
     const id = z.string().uuid().safeParse(req.params.id);
     if (!id.success) return res.status(400).json({ code: "INVALID_INPUT" });
 
@@ -345,7 +354,8 @@ export function workshopRouter() {
     }
   });
 
-  router.delete("/:id", requireRole("admin"), async (req: AuthedRequest, res) => {
+  // Protected deletion
+  router.delete("/:id", ...authHandlers, requireRole("admin"), async (req: AuthedRequest, res) => {
     const id = z.string().uuid().safeParse(req.params.id);
     if (!id.success) return res.status(400).json({ code: "INVALID_INPUT" });
 
@@ -364,9 +374,13 @@ export function workshopRouter() {
         return res.status(404).json({ code: "WORKSHOP_NOT_FOUND" });
       }
 
-      const confirmed = await countConfirmed(pool, id.data);
+      const confirmed = await pool.query<{ n: string }>(
+        "select count(*)::text as n from registrations where workshop_id = $1 and status = 'confirmed'",
+        [id.data]
+      );
+      const confirmedCount = Number(confirmed.rows[0]?.n ?? 0);
 
-      if (confirmed === 0) {
+      if (confirmedCount === 0) {
         await client.query(
           `
           insert into audit_logs (actor_id, action, resource_type, resource_id, old_values, new_values, ip_address, user_agent)
@@ -455,7 +469,8 @@ export function workshopRouter() {
     }
   });
 
-  router.get("/:id/participants", requireRole("admin"), async (req, res) => {
+  // Protected admin participants
+  router.get("/:id/participants", ...authHandlers, requireRole("admin"), async (req, res) => {
     const id = z.string().uuid().safeParse(req.params.id);
     if (!id.success) return res.status(400).json({ code: "INVALID_INPUT" });
 
@@ -473,6 +488,7 @@ export function workshopRouter() {
     return res.json({ workshopId: id.data, participants: r.rows });
   });
 
+  // Public detail
   router.get("/:id", async (req, res) => {
     const id = z.string().uuid().safeParse(req.params.id);
     if (!id.success) return res.status(400).json({ code: "INVALID_INPUT" });
@@ -502,6 +518,132 @@ export function workshopRouter() {
     const body = mapWorkshopRow(w as Record<string, unknown>);
     await redis.set(key, JSON.stringify(body), "EX", 300);
     return res.json(body);
+  });
+
+  // Protected PDF upload
+  router.post("/:id/pdf", ...authHandlers, requireRole("admin"), (req: AuthedRequest, res, next) => {
+    upload.single('file')(req, res, (err: any) => {
+      if (err) {
+        if (err.message === "INVALID_FILE_TYPE") {
+          return res.status(400).json({ message: "File phải có định dạng PDF" });
+        }
+        if (err.code === "LIMIT_FILE_SIZE") {
+          return res.status(413).json({ message: "File vượt kích thước tối đa (50MB)" });
+        }
+        return res.status(400).json({ message: err.message });
+      }
+      next();
+    });
+  }, async (req: AuthedRequest, res) => {
+    const file = req.file;
+    if (!file) {
+      return res.status(400).json({ message: "File không có nội dung" });
+    }
+    if (file.size === 0) {
+      return res.status(400).json({ message: "File không có nội dung" });
+    }
+    if (file.buffer.length < 4 || file.buffer.toString('utf8', 0, 4) !== '%PDF') {
+      return res.status(400).json({ message: "File phải có định dạng PDF" });
+    }
+
+    const id = z.string().uuid().safeParse(req.params.id);
+    if (!id.success) return res.status(400).json({ code: "INVALID_INPUT" });
+
+    const pool = getPool();
+    const wsRes = await pool.query(`SELECT status FROM workshops WHERE id = $1`, [id.data]);
+    if (wsRes.rows.length === 0) {
+      return res.status(404).json({ message: "Workshop không tồn tại" });
+    }
+    if (wsRes.rows[0].status === "cancelled") {
+      return res.status(409).json({ message: "Workshop đã hủy, không thể upload PDF" });
+    }
+
+    const fileId = randomUUID();
+    const uploadDir = process.env.PDF_UPLOAD_DIR || path.join(process.cwd(), "uploads", "pdf");
+    const workshopDir = path.join(uploadDir, id.data);
+    const filePath = path.join(workshopDir, `${fileId}.pdf`);
+
+    try {
+      await fs.mkdir(workshopDir, { recursive: true });
+      await fs.writeFile(filePath, file.buffer);
+    } catch (err) {
+      console.error("Failed to save PDF:", err);
+      return res.status(500).json({ message: "Lỗi lưu file" });
+    }
+
+    const summaryId = randomUUID();
+    
+    await pool.query(
+      `INSERT INTO workshop_summaries (id, workshop_id, status, pdf_file_path, updated_at)
+       VALUES ($1, $2, 'pending', $3, NOW())
+       ON CONFLICT (workshop_id) DO UPDATE SET
+         pdf_file_path = EXCLUDED.pdf_file_path,
+         status = 'pending',
+         summary = NULL,
+         error_message = NULL,
+         processing_started_at = NULL,
+         completed_at = NULL,
+         updated_at = NOW()
+       RETURNING id`,
+      [summaryId, id.data, filePath]
+    );
+
+    const actualSummaryIdRes = await pool.query(`SELECT id FROM workshop_summaries WHERE workshop_id = $1`, [id.data]);
+    const actualSummaryId = actualSummaryIdRes.rows[0].id;
+
+    try {
+      await publishJson("ai_summary.generate", {
+        workshopId: id.data,
+        filePath,
+        summaryId: actualSummaryId
+      });
+    } catch (err) {
+      console.error("Failed to publish to ai_summary.generate", err);
+    }
+
+    return res.status(202).json({
+      summary_id: actualSummaryId,
+      status: "pending"
+    });
+  });
+
+  // Public summary
+  router.get("/:id/summary", async (req, res) => {
+    const id = z.string().uuid().safeParse(req.params.id);
+    if (!id.success) return res.status(400).json({ code: "INVALID_INPUT" });
+
+    const pool = getPool();
+    const summaryRes = await pool.query(
+      `SELECT status, summary, ai_model_used, completed_at, error_message
+       FROM workshop_summaries
+       WHERE workshop_id = $1`,
+      [id.data]
+    );
+
+    if (summaryRes.rows.length === 0) {
+      return res.status(404).json({ message: "Summary not found" });
+    }
+
+    const s = summaryRes.rows[0];
+    if (s.status === 'done') {
+      return res.status(200).json({
+        status: s.status,
+        summary: s.summary,
+        ai_model_used: s.ai_model_used,
+        completed_at: s.completed_at
+      });
+    }
+
+    if (s.status === 'failed') {
+      return res.status(200).json({
+        status: s.status,
+        error_message: s.error_message
+      });
+    }
+
+    return res.status(200).json({
+      status: s.status
+    });
   });
 
   return router;

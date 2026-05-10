@@ -126,6 +126,50 @@ export function authRouter() {
     return res.status(204).send();
   });
 
+  router.put("/profile", async (req, res) => {
+    const auth = req.headers.authorization;
+    const token = auth?.startsWith("Bearer ") ? auth.slice("Bearer ".length) : null;
+    if (!token) return res.status(401).json({ code: "MISSING_TOKEN" });
+
+    let payload;
+    try {
+      payload = await verifyAccessToken(token);
+    } catch {
+      return res.status(401).json({ code: "INVALID_TOKEN" });
+    }
+
+    const schema = z.object({
+      fcmToken: z.string().optional(),
+      fullName: z.string().optional(),
+    });
+
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ code: "INVALID_INPUT" });
+
+    const pool = getPool();
+    const { fcmToken, fullName } = parsed.data;
+
+    const sets: string[] = [];
+    const vals: any[] = [];
+    if (fcmToken !== undefined) {
+      sets.push("fcm_token = $" + (vals.length + 1));
+      vals.push(fcmToken);
+    }
+    if (fullName !== undefined) {
+      sets.push("full_name = $" + (vals.length + 1));
+      vals.push(fullName);
+    }
+
+    if (sets.length === 0) return res.status(400).json({ code: "INVALID_INPUT" });
+
+    vals.push(payload.userId);
+    await pool.query(
+      `update users set ${sets.join(", ")}, updated_at = now() where id = $${vals.length}`,
+      vals
+    );
+
+    return res.json({ ok: true });
+  });
+
   return router;
 }
-

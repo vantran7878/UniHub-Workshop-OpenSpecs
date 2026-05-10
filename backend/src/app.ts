@@ -6,6 +6,7 @@ import { authRouter } from "./modules/auth/authRouter.js";
 import { bookingRouter } from "./modules/booking/bookingRouter.js";
 import { sandboxRouter } from "./modules/payment/sandboxRouter.js";
 import { workshopRouter } from "./modules/workshops/workshopRouter.js";
+import { checkinRouter } from "./modules/checkin/checkinRouter.js";
 
 export function createApp() {
   const app = express();
@@ -27,6 +28,7 @@ export function createApp() {
 
   app.use("/api/auth", authRouter());
   app.use("/api/workshops", workshopRouter());
+  app.use("/api/checkin", checkinRouter());
   app.use("/api", bookingRouter());
   app.use("/sandbox", sandboxRouter());
 
