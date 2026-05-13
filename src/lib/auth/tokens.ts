@@ -25,17 +25,47 @@ export async function storeRefreshTokenHash(userId: string, refreshToken: string
   const ttlInSeconds = 7 * 24 * 60 * 60; // 7 days
   
   const tokenKey = `refresh_token:${hash}`;
-  await redis.set(tokenKey, userId, 'EX', ttlInSeconds);
+  const userSetKey = `user:${userId}:refresh_tokens`;
+
+  await redis.multi()
+    .set(tokenKey, userId, 'EX', ttlInSeconds)
+    .sadd(userSetKey, hash)
+    .expire(userSetKey, ttlInSeconds)
+    .exec();
 }
 
 export async function deleteRefreshTokenHash(refreshToken: string): Promise<void> {
   const hash = crypto.createHash('sha256').update(refreshToken).digest('hex');
   const tokenKey = `refresh_token:${hash}`;
-  await redis.del(tokenKey);
+  
+  const userId = await redis.get(tokenKey);
+  if (userId) {
+    const userSetKey = `user:${userId}:refresh_tokens`;
+    await redis.multi()
+      .del(tokenKey)
+      .srem(userSetKey, hash)
+      .exec();
+  } else {
+    await redis.del(tokenKey);
+  }
 }
 
 export async function verifyRefreshTokenHash(refreshToken: string): Promise<string | null> {
   const hash = crypto.createHash('sha256').update(refreshToken).digest('hex');
   const tokenKey = `refresh_token:${hash}`;
   return redis.get(tokenKey);
+}
+
+export async function blacklistAllTokens(userId: string): Promise<void> {
+  const userSetKey = `user:${userId}:refresh_tokens`;
+  const hashes = await redis.smembers(userSetKey);
+  
+  if (hashes.length > 0) {
+    const pipeline = redis.pipeline();
+    hashes.forEach((hash) => {
+      pipeline.del(`refresh_token:${hash}`);
+    });
+    pipeline.del(userSetKey);
+    await pipeline.exec();
+  }
 }
