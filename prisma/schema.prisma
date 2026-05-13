@@ -1,0 +1,246 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  student
+  admin
+  staff
+}
+
+enum WorkshopStatus {
+  active
+  cancelled
+  completed
+}
+
+enum RegistrationStatus {
+  pending
+  confirmed
+  cancelled
+  no_show
+  failed
+}
+
+enum PaymentStatus {
+  pending
+  processing
+  success
+  failed
+  refunded
+}
+
+enum SummaryStatus {
+  pending
+  processing
+  done
+  failed
+}
+
+enum NotificationType {
+  registration_confirmed
+  payment_success
+  payment_failed
+  workshop_cancelled
+  reminder
+  checkin_success
+}
+
+enum NotificationStatus {
+  pending
+  sent
+  failed
+  retrying
+}
+
+enum ImportStatus {
+  success
+  failed
+  partial
+}
+
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  studentId    String?  @unique @map("student_id") @db.VarChar(50)
+  fullName     String   @map("full_name") @db.VarChar(255)
+  email        String   @unique @db.VarChar(255)
+  phone        String?  @db.VarChar(20)
+  passwordHash String?  @map("password_hash") @db.VarChar(255)
+  role         Role     @default(student)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  registrations Registration[]
+  payments      Payment[]
+  checkins      Checkin[]
+  notifications Notification[]
+  workshops     Workshop[]     @relation("WorkshopCreator")
+  auditLogs     AuditLog[]     @relation("AuditLogActor")
+
+  @@map("users")
+}
+
+model Workshop {
+  id                  String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title               String         @db.VarChar(255)
+  description         String?        @db.Text
+  speaker             String?        @db.VarChar(255)
+  room                String?        @db.VarChar(100)
+  capacity            Int
+  startTime           DateTime       @map("start_time")
+  endTime             DateTime       @map("end_time")
+  isPaid              Boolean        @default(false) @map("is_paid")
+  price               Decimal?       @db.Decimal(10, 2)
+  status              WorkshopStatus @default(active)
+  registrationOpenAt  DateTime       @map("registration_open_at")
+  registrationCloseAt DateTime?      @map("registration_close_at")
+  createdBy           String         @map("created_by") @db.Uuid
+  createdAt           DateTime       @default(now()) @map("created_at")
+  updatedAt           DateTime       @updatedAt @map("updated_at")
+
+  creator       User             @relation("WorkshopCreator", fields: [createdBy], references: [id])
+  registrations Registration[]
+  checkins      Checkin[]
+  summary       WorkshopSummary?
+
+  @@map("workshops")
+}
+
+model Registration {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String             @map("user_id") @db.Uuid
+  workshopId        String             @map("workshop_id") @db.Uuid
+  status            RegistrationStatus @default(pending)
+  qrCode            String?            @unique @map("qr_code") @db.VarChar(255)
+  qrCodeGeneratedAt DateTime?          @map("qr_code_generated_at")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workshop      Workshop       @relation(fields: [workshopId], references: [id], onDelete: Cascade)
+  payment       Payment?
+  checkin       Checkin?
+  notifications Notification[]
+
+  @@unique([userId, workshopId])
+  @@map("registrations")
+}
+
+model Payment {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  registrationId  String        @unique @map("registration_id") @db.Uuid
+  userId          String        @map("user_id") @db.Uuid
+  amount          Decimal       @db.Decimal(10, 2)
+  currency        String        @default("VND") @db.VarChar(3)
+  status          PaymentStatus @default(pending)
+  paymentMethod   String?       @map("payment_method") @db.VarChar(50)
+  transactionId   String?       @map("transaction_id") @db.VarChar(255)
+  idempotencyKey  String        @unique @map("idempotency_key") @db.VarChar(255)
+  gatewayResponse Json?         @map("gateway_response")
+  errorMessage    String?       @map("error_message") @db.Text
+  attemptedAt     DateTime?     @map("attempted_at")
+  completedAt     DateTime?     @map("completed_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@map("payments")
+}
+
+model Checkin {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  registrationId String   @unique @map("registration_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  workshopId     String   @map("workshop_id") @db.Uuid
+  checkinTime    DateTime @map("checkin_time")
+  deviceId       String?  @map("device_id") @db.VarChar(255)
+  location       String?  @db.VarChar(100)
+  createdAt      DateTime @default(now()) @map("created_at")
+  isSynced       Boolean  @default(false) @map("is_synced")
+  syncedAt       DateTime @updatedAt @map("synced_at")
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id])
+  workshop     Workshop     @relation(fields: [workshopId], references: [id])
+
+  @@map("checkins")
+}
+
+model Notification {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String             @map("user_id") @db.Uuid
+  registrationId String?            @map("registration_id") @db.Uuid
+  type           NotificationType
+  content        String             @db.Text
+  status         NotificationStatus
+  channels       Json               @default("[\"app\"]")
+  retryCount     Int                @default(0) @map("retry_count")
+  lastRetryAt    DateTime?          @map("last_retry_at")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  registration Registration? @relation(fields: [registrationId], references: [id], onDelete: SetNull)
+
+  @@map("notifications")
+}
+
+model WorkshopSummary {
+  id                  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workshopId          String        @unique @map("workshop_id") @db.Uuid
+  pdfFilePath         String?       @map("pdf_file_path") @db.VarChar(500)
+  summary             String?       @db.Text
+  status              SummaryStatus @default(pending)
+  aiModelUsed         String?       @map("ai_model_used") @db.VarChar(100)
+  processingStartedAt DateTime?     @map("processing_started_at")
+  completedAt         DateTime?     @map("completed_at")
+  errorMessage        String?       @map("error_message") @db.Text
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  workshop Workshop @relation(fields: [workshopId], references: [id], onDelete: Cascade)
+
+  @@map("workshop_summaries")
+}
+
+model StudentImportLog {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fileName      String       @map("file_name") @db.VarChar(500)
+  fileHash      String?      @map("file_hash") @db.VarChar(255)
+  status        ImportStatus
+  rowsProcessed Int          @default(0) @map("rows_processed")
+  rowsInserted  Int          @default(0) @map("rows_inserted")
+  rowsUpdated   Int          @default(0) @map("rows_updated")
+  rowsSkipped   Int          @default(0) @map("rows_skipped")
+  errorLog      String?      @map("error_log") @db.Text
+  errorDetails  Json?        @map("error_details")
+  importedAt    DateTime     @map("imported_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  @@map("student_import_logs")
+}
+
+model AuditLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId      String?  @map("actor_id") @db.Uuid
+  action       String   @db.VarChar(50)
+  resourceType String?  @map("resource_type") @db.VarChar(50)
+  resourceId   String?  @map("resource_id") @db.Uuid
+  changes      Json?
+  oldValues    Json?    @map("old_values")
+  newValues    Json?    @map("new_values")
+  ipAddress    String?  @map("ip_address") @db.Inet
+  userAgent    String?  @map("user_agent") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  actor User? @relation("AuditLogActor", fields: [actorId], references: [id])
+
+  @@map("audit_logs")
+}
