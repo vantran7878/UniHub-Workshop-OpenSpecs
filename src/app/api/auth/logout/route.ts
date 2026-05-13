@@ -1,29 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { deleteRefreshTokenHash } from '@/lib/auth/tokens';
-import * as jwt from 'jsonwebtoken';
-
-// Note: JWT keys should be correctly formatted strings containing line breaks
-const publicKey = process.env.JWT_PUBLIC_KEY?.replace(/\\n/g, '\n') || '';
+import { authenticateUser } from '@/lib/auth/middleware';
 
 export async function POST(req: NextRequest) {
   try {
-    // Verify the Authorization header
-    const authHeader = req.headers.get('authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const user = authenticateUser(req);
+    if (!user) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    const accessToken = authHeader.split(' ')[1];
-    let decodedToken: any;
-
-    try {
-      decodedToken = jwt.verify(accessToken, publicKey, { algorithms: ['RS256'] });
-    } catch (e) {
-      return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
-    }
-
-    const userId = decodedToken.sub;
+    const userId = user.sub;
 
     // Read refresh token from cookies
     const refreshTokenCookie = req.cookies.get('refresh_token');
