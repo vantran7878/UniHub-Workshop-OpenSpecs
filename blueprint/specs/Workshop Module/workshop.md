@@ -413,48 +413,6 @@ Tổng quan: Module được chia thành **6 feature** độc lập, có thể i
 
 ---
 
-### 5d. Aggregate Report
-
-**Endpoint:** `GET /api/admin/reports/workshops`
-
-**Query params:**
-| Param | Loại | Mô tả |
-|---|---|---|
-| `from` | ISO date | Bắt đầu khoảng thời gian |
-| `to` | ISO date | Kết thúc khoảng thời gian |
-| `status` | string | Lọc theo status |
-
-**Response (200 OK):**
-```json
-{
-  "summary": {
-    "total_workshops": 12,
-    "total_registrations": 320,
-    "total_revenue": 45000000,
-    "currency": "VND"
-  },
-  "workshops": [
-    {
-      "id": "uuid",
-      "title": "UX Research 101",
-      "starts_at": "2025-09-01T09:00:00+07:00",
-      "status": "published",
-      "registration_count": 18,
-      "capacity": 30,
-      "revenue": 9000000
-    }
-  ]
-}
-```
-
-**Acceptance criteria:**
-- `total_revenue` chỉ tính các payment có `payment_status = paid`.
-- Khoảng thời gian `from`/`to` filter theo `starts_at` của workshop.
-
-**Dependencies:** Feature 1, Feature 2, cần có dữ liệu registrations từ module Registration.
-
----
-
 ## Feature 6 — Audit Logging
 
 **Mục tiêu:** Ghi lại mọi hành động quản trị quan trọng trên workshop để phục vụ truy vết.

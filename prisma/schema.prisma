@@ -147,6 +147,8 @@ model Registration {
   notifications Notification[]
 
   @@unique([userId, workshopId])
+  @@index([workshopId])
+  @@index([createdAt])
   @@map("registrations")
 }
 

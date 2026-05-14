@@ -146,6 +146,18 @@ export async function PUT(
       { userId: user.sub, resourceType: 'Workshop', resourceId: id, ipAddress, userAgent }
     );
 
+    // Explicit capacity change logging
+    if (data.capacity !== undefined && data.capacity !== workshop.capacity) {
+      auditLog('CAPACITY_CHANGED',
+        {
+          workshop_id: id,
+          old_capacity: workshop.capacity,
+          new_capacity: data.capacity
+        },
+        { userId: user.sub, resourceType: 'Workshop', resourceId: id, ipAddress, userAgent }
+      );
+    }
+
     return NextResponse.json({
       ...updatedWorkshop,
       registration_count: updatedWorkshop._count.registrations,
