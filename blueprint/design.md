@@ -93,8 +93,8 @@ Tách biệt các luồng xử lý bất đồng bộ khỏi luồng request ch�
 > **Lưu ý:** Đồng bộ check-in từ mobile app gọi trực tiếp backend API (POST /checkin/sync-offline), không qua message broker. RabbitMQ chỉ phục vụ notification, AI summary và CSV import.
 
 6. Cơ sở dữ liệu
-- PostgreSQL (primary store): lưu toàn bộ dữ liệu quan hệ — sinh viên, workshop, đăng ký, lịch sử thanh toán. Đảm bảo ACID, phù hợp với yêu cầu nhất quán cao (đăng ký chỗ, thanh toán).
-- Redis: phục vụ nhiều mục đích: distributed lock để chống race condition khi tranh chấp chỗ ngồi; cache danh sách workshop và số chỗ còn lại (giảm tải DB khi 12.000 sinh viên đọc đồng thời); lưu idempotency key cho thanh toán; lưu sliding window counter cho rate limiting.
+- PostgreSQL (primary store): lưu toàn bộ dữ liệu quan hệ — sinh viên, workshop, đăng ký, lịch sử thanh toán. Đảm bảo ACID, phù hợp với yêu cầu nhất quán cao (đăng ký chỗ, thanh toán), ưu tiên sử dụng để lock khi race condition xuất hiện.
+- Redis: phục vụ nhiều mục đích: có thể distributed lock để chống race condition khi tranh chấp chỗ ngồi; cache danh sách workshop và số chỗ còn lại (giảm tải DB khi 12.000 sinh viên đọc đồng thời); lưu idempotency key cho thanh toán; lưu sliding window counter cho rate limiting.
 
 7. Batch Worker (Node.js cron job)
 Chạy theo lịch định kỳ (hàng đêm), đọc file CSV từ hệ thống cũ, xử lý dữ liệu sinh viên (validate, deduplicate, upsert vào PostgreSQL). Chạy độc lập, không ảnh hưởng đến luồng chính khi xảy ra lỗi.
@@ -217,7 +217,7 @@ C4Container
   Rel(api, broker, "Publish events (notification, AI, CSV import)", "AMQP")
 
   Rel(broker, ai_worker, "Consume PDF event", "AMQP")
-  Rel(broker, batch_worker, "Consume checkin-sync event", "AMQP")
+  Rel(batch_worker, postgres, "Sync database", "TCP")
 
   Rel(ai_worker, ai_svc, "Gửi text để tóm tắt", "HTTPS")
   Rel(ai_worker, postgres, "Lưu kết quả tóm tắt", "TCP")
