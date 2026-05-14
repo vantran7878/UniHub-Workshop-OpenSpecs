@@ -22,7 +22,8 @@ import {
   Settings,
   LogOut,
   ChevronDown,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Sparkles
 } from 'lucide-react'
 import type { User } from '@/lib/types/database'
 
@@ -43,8 +44,13 @@ const navItems = [
   },
   {
     title: 'Đăng ký',
-    href: '/admin/registrations',
+    href: '/admin/workshops',
     icon: ClipboardList,
+  },
+  {
+    title: 'Check-in',
+    href: '/admin/checkin',
+    icon: QrCode,
   },
   {
     title: 'Người dùng',
@@ -52,19 +58,14 @@ const navItems = [
     icon: Users,
   },
   {
-    title: 'Check-in',
-    href: '/admin/checkins',
-    icon: QrCode,
-  },
-  {
     title: 'Import sinh viên',
-    href: '/admin/import',
+    href: '/admin/import-students',
     icon: FileSpreadsheet,
   },
   {
-    title: 'Cài đặt',
-    href: '/admin/settings',
-    icon: Settings,
+    title: 'AI Summary',
+    href: '/admin/ai-summary',
+    icon: Sparkles,
   },
 ]
 
