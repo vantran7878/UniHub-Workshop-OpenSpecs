@@ -40,3 +40,22 @@ export const PricingSetupSchema = z.object({
 });
 
 export type PricingSetupInput = z.infer<typeof PricingSetupSchema>;
+
+export const UpdateWorkshopSchema = z.object({
+  title: z.string().min(1).max(255).optional(),
+  description: z.string().optional(),
+  location: z.string().optional(),
+  starts_at: z.string().datetime().optional(),
+  ends_at: z.string().datetime().optional(),
+  capacity: z.number().int().positive().optional(),
+}).refine((data) => {
+  if (data.starts_at && data.ends_at) {
+    return new Date(data.ends_at) > new Date(data.starts_at);
+  }
+  return true;
+}, {
+  message: 'End time must be after start time',
+  path: ['ends_at'],
+});
+
+export type UpdateWorkshopInput = z.infer<typeof UpdateWorkshopSchema>;

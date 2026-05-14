@@ -102,6 +102,7 @@ model Workshop {
   createdBy           String         @map("created_by") @db.Uuid
   createdAt           DateTime       @default(now()) @map("created_at")
   updatedAt           DateTime       @updatedAt @map("updated_at")
+  needsNotification   Boolean        @default(false) @map("needs_notification")
 
   creator       User             @relation("WorkshopCreator", fields: [createdBy], references: [id])
   registrations Registration[]
