@@ -1,20 +1,86 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context:
+  project:
+    name: UniHub Workshop
+    architecture: Modular Monolith
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  tech_stack:
+    frontend:
+      - React
+      - Next.js
+      - Tailwind CSS
+      - TypeScript
+
+    backend:
+      - Next.js API Routes
+      - RESTful API
+
+    database:
+      - PostgreSQL
+      - Prisma ORM
+
+    infrastructure:
+      - Redis (caching, locks, rate limiting)
+      - RabbitMQ (async jobs/events)
+
+    authentication:
+      - JWT Authentication
+      - RBAC
+
+  domain:
+    roles:
+      - Student
+      - Organizer
+      - Check-in Staff
+
+    permissions:
+      Student:
+        - View workshops
+        - Register workshops
+        - View registrations
+
+      Organizer:
+        - Create workshops
+        - Manage workshops
+        - View analytics
+
+      Check-in Staff:
+        - Scan QR codes
+        - Manage attendance
+
+    core_modules:
+      - Auth
+      - Workshop Management
+      - Registration
+      - Payment
+      - Check-in
+      - Notifications
+      - AI PDF Summary
+      - CSV Data Sync
+
+rules:
+  proposal:
+    - Keep proposals concise and focused on the problem.
+    - Always include a "Non-goals" section.
+    - Prefer incremental changes over large rewrites.
+
+  tasks:
+    - Break tasks into small, actionable chunks.
+    - Keep tasks independently testable.
+    - Specify dependencies between tasks when needed.
+
+  architecture:
+    - Follow modular monolith boundaries.
+    - Avoid tight coupling between modules.
+    - Prefer async processing for heavy/background jobs.
+
+  api:
+    - Follow RESTful conventions.
+    - Use consistent error response formats.
+    - Validate all incoming payloads.
+
+  database:
+    - Use Prisma migrations.
+    - Avoid N+1 queries.
+    - Prefer soft delete for critical business data.
