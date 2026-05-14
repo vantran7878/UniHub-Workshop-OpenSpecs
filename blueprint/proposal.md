@@ -34,10 +34,10 @@ UniHub Workshop được xây dựng để số hóa toàn bộ vòng đời c�
 ## Người dùng và nhu cầu
 
 ### Sinh viên
-Nhóm người dùng đông nhất và cũng là điểm tạo tải lớn nhất cho hệ thống. Nhu cầu cốt lõi:
+Nhóm người dùng đông nhất và cũng là điểm tạo tải lớn nhất cho hệ thống, sử dụng cả web và mobile app. Nhu cầu cốt lõi:
 - Xem toàn bộ lịch workshop trong tuần, bao gồm thông tin diễn giả, phòng tổ chức, sơ đồ phòng và số chỗ còn lại theo thời gian thực.
 - Đăng ký tham dự — cả workshop miễn phí lẫn có phí — và nhận mã QR để check-in.
-- Nhận thông báo xác nhận qua app và email ngay sau khi đăng ký thành công.
+- Nhận thông báo xác nhận và mã QR check-in qua app và email ngay sau khi đăng ký thành công.
 
 Điều quan trọng nhất với sinh viên: **tốc độ và sự công bằng** — ai đăng ký trước thì được chỗ, và kết quả phải rõ ràng ngay lập tức.
 
@@ -76,7 +76,6 @@ Người đứng tại cửa phòng trong suốt thời gian diễn ra sự ki�
 - Tích hợp với cổng thanh toán thật (Momo, VNPay, v.v.) trong môi trường production.
 - Tích hợp trực tiếp với hệ thống quản lý sinh viên hiện tại của trường (chỉ đọc CSV export).
 - Hạ tầng production (CI/CD, monitoring, auto-scaling trên cloud).
-- Ứng dụng di động cho sinh viên (sinh viên truy cập qua web; chỉ nhân sự check-in dùng mobile app).
 - Quản lý tài chính, hoàn tiền tự động khi workshop bị hủy.
 
 ---

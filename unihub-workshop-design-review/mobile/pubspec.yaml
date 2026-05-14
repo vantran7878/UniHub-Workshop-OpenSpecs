@@ -1,0 +1,58 @@
+name: unihub_mobile
+description: UniHub Workshop Mobile App - Ứng dụng quản lý workshop đại học
+
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  supabase_flutter: ^2.3.0
+  go_router: ^13.0.0
+  flutter_riverpod: ^2.4.9
+  riverpod_annotation: ^2.3.3
+  freezed_annotation: ^2.4.1
+  json_annotation: ^4.8.1
+  sqflite: ^2.3.0
+  path_provider: ^2.1.1
+  mobile_scanner: ^4.0.0
+  qr_flutter: ^4.1.0
+  connectivity_plus: ^5.0.2
+  intl: ^0.18.1
+  cached_network_image: ^3.3.0
+  flutter_secure_storage: ^9.0.0
+  permission_handler: ^11.1.0
+  shared_preferences: ^2.2.2
+  dio: ^5.4.0
+  flutter_local_notifications: ^16.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  build_runner: ^2.4.7
+  freezed: ^2.4.5
+  json_serializable: ^6.7.1
+  riverpod_generator: ^2.3.9
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/images/
+    - assets/icons/
+
+  fonts:
+    - family: BeVietnamPro
+      fonts:
+        - asset: assets/fonts/BeVietnamPro-Regular.ttf
+        - asset: assets/fonts/BeVietnamPro-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/BeVietnamPro-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/BeVietnamPro-Bold.ttf
+          weight: 700

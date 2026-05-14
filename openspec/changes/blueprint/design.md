@@ -56,11 +56,11 @@ Các module có ranh giới nghiệp vụ rõ ràng (Workshop, Registration, Pay
 
 
 1. Web App (Next.js)
-Giao diện cho sinh viên (xem lịch, đăng ký, tra cứu QR, thông báo xác nhận khi đã đăng ký thành công workshop) và ban tổ chức (trang admin quản lý workshop, thống kê). Render server-side để tối ưu SEO và tốc độ load. Giao tiếp với backend qua REST API.
-2. Mobile App (Flutter)
-- Dành cho nhân sự check-in. Hỗ trợ chế độ offline: ghi nhận check-in vào local storage khi mất mạng tự đồng bộ lên server khi kết nối phục hồi. Giao tiếp với backend qua REST API; khi offline, hàng đợi đồng bộ được lưu bằng SQLite trên thiết bị.
+Giao diện chính cho Sinh viên (xem lịch, đăng ký, tra cứu QR, thông báo) và Ban tổ chức (quản lý workshop, thống kê). Được thiết kế responsive để hoạt động tốt trên cả máy tính và điện thoại.
 
-- Dành cho sinh viên (xem lịch, đăng ký, tra cứu QR, thông báo xác nhận khi đã đăng ký thành công workshop). Giao tiếp với backend qua REST API.
+2. Mobile App (Flutter)
+Ứng dụng dành cho Nhân sự check-in (Staff). Hỗ trợ quét mã QR, làm việc offline với SQLite và tự động đồng bộ khi có mạng.
+Ứng dụng dành cho Sinh viên nhận thông báo (thông báo về workshop, QR để check-in)
 
 3. API Gateway (Nginx + custom middleware hoặc Kong)
 Tầng trung gian giữa client và backend, đảm nhiệm:
@@ -93,8 +93,8 @@ Tách biệt các luồng xử lý bất đồng bộ khỏi luồng request ch�
 > **Lưu ý:** Đồng bộ check-in từ mobile app gọi trực tiếp backend API (POST /checkin/sync-offline), không qua message broker. RabbitMQ chỉ phục vụ notification, AI summary và CSV import.
 
 6. Cơ sở dữ liệu
-- PostgreSQL (primary store): lưu toàn bộ dữ liệu quan hệ — sinh viên, workshop, đăng ký, lịch sử thanh toán. Đảm bảo ACID, phù hợp với yêu cầu nhất quán cao (đăng ký chỗ, thanh toán), ưu tiên sử dụng để lock khi race condition xuất hiện.
-- Redis: phục vụ nhiều mục đích: có thể distributed lock để chống race condition khi tranh chấp chỗ ngồi; cache danh sách workshop và số chỗ còn lại (giảm tải DB khi 12.000 sinh viên đọc đồng thời); lưu idempotency key cho thanh toán; lưu sliding window counter cho rate limiting.
+- PostgreSQL (primary store): lưu toàn bộ dữ liệu quan hệ — sinh viên, workshop, đăng ký, lịch sử thanh toán. Đảm bảo ACID, phù hợp với yêu cầu nhất quán cao (đăng ký chỗ, thanh toán).
+- Redis: phục vụ nhiều mục đích: distributed lock để chống race condition khi tranh chấp chỗ ngồi; cache danh sách workshop và số chỗ còn lại (giảm tải DB khi 12.000 sinh viên đọc đồng thời); lưu idempotency key cho thanh toán; lưu sliding window counter cho rate limiting.
 
 7. Batch Worker (Node.js cron job)
 Chạy theo lịch định kỳ (hàng đêm), đọc file CSV từ hệ thống cũ, xử lý dữ liệu sinh viên (validate, deduplicate, upsert vào PostgreSQL). Chạy độc lập, không ảnh hưởng đến luồng chính khi xảy ra lỗi.
@@ -143,8 +143,8 @@ Diagram mức cao nhất thể hiện **UniHub Workshop** như một hệ thốn
 - **Future Notification Channels** (Telegram, Push Notification service): Thiết kế để dễ mở rộng.
 
 **Interactions chính:**
-- Sinh viên và Ban tổ chức tương tác với UniHub Workshop qua Web Application.
-- Nhân sự check-in tương tác qua Mobile Application.
+- Sinh viên và Ban tổ chức tương tác với UniHub Workshop qua Web Application (Responsive).
+- Nhân sự check-in tương tác qua Mobile Application (Staff only).
 - UniHub Workshop gọi ra các external systems để xử lý thanh toán, gửi thông báo, tạo AI summary và nhập dữ liệu sinh viên từ CSV.
 
 **Lý do thiết kế Level 1:**
@@ -188,8 +188,8 @@ C4Container
   Person(checkin_staff, "Nhân sự check-in", "")
 
   System_Boundary(unihub, "UniHub Workshop") {
-    Container(web_app, "Web App", "Next.js", "Giao diện cho sinh viên đăng ký và ban tổ chức quản trị")
-    Container(mobile_app, "Mobile App", "Flutter", "Quét QR, hỗ trợ check-in offline với local SQLite")
+    Container(web_app, "Web App", "Next.js", "Giao diện cho sinh viên (đăng ký, xem QR) và ban tổ chức (quản trị)")
+    Container(mobile_app, "Mobile App", "Flutter", "Ứng dụng dành riêng cho nhân sự để quét QR check-in (hỗ trợ offline)")
     Container(api, "Backend API", "Node.js / NestJS", "Xử lý toàn bộ nghiệp vụ: đăng ký, thanh toán, check-in, phân quyền")
     Container(api_gateway, "API Gateway", "Nginx", "Rate limiting, xác thực JWT, routing")
     Container(broker, "Message Broker", "RabbitMQ", "Hàng đợi bất đồng bộ cho notification, AI summary, CSV import")
@@ -204,9 +204,9 @@ C4Container
   System_Ext(ai_svc, "AI Summarization Service", "HTTPS")
   System_Ext(legacy_sys, "Legacy Student System (CSV)", "File export")
 
-  Rel(student, web_app, "Dùng trình duyệt", "HTTPS")
+  Rel(student, web_app, "Dùng trình duyệt (PC/Mobile)", "HTTPS")
   Rel(organizer, web_app, "Quản trị qua admin portal", "HTTPS")
-  Rel(checkin_staff, mobile_app, "Quét QR tại cửa phòng", "HTTPS / Offline")
+  Rel(checkin_staff, mobile_app, "Quét QR check-in", "HTTPS / Offline")
 
   Rel(web_app, api_gateway, "Gọi API", "HTTPS / WebSocket")
   Rel(mobile_app, api_gateway, "Gọi API, đồng bộ offline", "HTTPS")
@@ -217,7 +217,7 @@ C4Container
   Rel(api, broker, "Publish events (notification, AI, CSV import)", "AMQP")
 
   Rel(broker, ai_worker, "Consume PDF event", "AMQP")
-  Rel(batch_worker, postgres, "Sync database", "TCP")
+  Rel(broker, batch_worker, "Consume checkin-sync event", "AMQP")
 
   Rel(ai_worker, ai_svc, "Gửi text để tóm tắt", "HTTPS")
   Rel(ai_worker, postgres, "Lưu kết quả tóm tắt", "TCP")
@@ -249,10 +249,10 @@ Hệ thống bao gồm 4 layer chính:
 │                                                                  │
 │  ┌──────────────────────────────┐   ┌──────────────────────────┐ │
 │  │  Web App (React/Next.js)     │   │ Mobile App (Flutter)     │ │
-│  │                              │   │ - Login/Register         │ │
-│  │  - Student Dashboard         │   │ - QR Scan Check-in       │ │
-│  │  - Admin Panel               │   │ - Offline Data Sync      │ │
-│  │  - Login/Register            │   │ - Local SQLite DB        │ │
+│  │  (Student & Admin)           │   │ (Staff Only)             │ │
+│  │  - Browse/Register Workshop  │   │ - Staff Login            │ │
+│  │  - Student QR Display        │   │ - QR Scan Check-in       │ │
+│  │  - Admin Management Portal   │   │ - Offline Data Sync      │ │
 │  └──────────────────────────────┘   └──────────────────────────┘ │
 │                │                              │                  │
 └────────────────┼──────────────────────────────┼──────────────────┘
@@ -331,15 +331,14 @@ Hệ thống bao gồm 4 layer chính:
 #### 3.2.1 Client Layer
 
 **Web App (React/Next.js)**
-- Sinh viên: xem danh sách workshop, đăng ký, xem QR code
-- Ban tổ chức: tạo workshop, sửa room/time, xem thống kê, xem danh sách đăng ký
+- Sinh viên: xem danh sách workshop, đăng ký, xem QR code (được thiết kế mobile-responsive).
+- Ban tổ chức: tạo workshop, sửa room/time, xem thống kê, xem danh sách đăng ký.
 
 **Mobile App (Flutter)**
-- Nhân sự: quét QR code để check-in
-- Sinh viên: lấy mã QR để check-in
-- Hỗ trợ offline mode: SQLite local database lưu registration list
-- Khi mất mạng: check-in được ghi nhận local
-- Khi có mạng: tự động sync với server
+- Nhân sự (Staff): đăng nhập và thực hiện quét QR code để check-in.
+- Hỗ trợ offline mode: SQLite local database lưu valid QR list cho workshop.
+- Khi mất mạng: check-in được ghi nhận local.
+- Khi có mạng: tự động sync với server.
 
 #### 3.2.2 API Gateway
 
