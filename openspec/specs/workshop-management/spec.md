@@ -36,6 +36,6 @@ The system SHALL provide an endpoint `GET /api/admin/workshops/:id` that allows 
 #### Scenario: Retrieve workshop detail
 - **WHEN** an admin provides a valid workshop ID
 - **THEN** the system SHALL return the full workshop object
-- **AND** include pricing information if the workshop is `paid`
+- **AND** include the `pricing` object (base_price, currency, early_bird_price, early_bird_deadline) if the workshop is `paid`
 - **AND** include the total `registration_count`
 

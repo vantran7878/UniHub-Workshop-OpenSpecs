@@ -17,6 +17,7 @@ export async function GET(
     const workshop = await prisma.workshop.findUnique({
       where: { id },
       include: {
+        pricing: true,
         _count: {
           select: { registrations: true },
         },
@@ -30,6 +31,12 @@ export async function GET(
     return NextResponse.json({
       ...workshop,
       registration_count: workshop._count.registrations,
+      pricing: workshop.pricing ? {
+        base_price: workshop.pricing.basePrice,
+        currency: workshop.pricing.currency,
+        early_bird_price: workshop.pricing.earlyBirdPrice,
+        early_bird_deadline: workshop.pricing.earlyBirdDeadline,
+      } : null,
       _count: undefined,
     });
 

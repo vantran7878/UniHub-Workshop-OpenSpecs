@@ -107,8 +107,24 @@ model Workshop {
   registrations Registration[]
   checkins      Checkin[]
   summary       WorkshopSummary?
+  pricing       WorkshopPricing?
 
   @@map("workshops")
+}
+
+model WorkshopPricing {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workshopId        String   @unique @map("workshop_id") @db.Uuid
+  basePrice         Decimal  @map("base_price") @db.Decimal(10, 2)
+  currency          String   @default("VND") @db.VarChar(3)
+  earlyBirdPrice    Decimal? @map("early_bird_price") @db.Decimal(10, 2)
+  earlyBirdDeadline DateTime? @map("early_bird_deadline")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  workshop Workshop @relation(fields: [workshopId], references: [id], onDelete: Cascade)
+
+  @@map("workshop_pricing")
 }
 
 model Registration {

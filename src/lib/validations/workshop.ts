@@ -23,3 +23,20 @@ export const WorkshopQuerySchema = z.object({
   page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
   limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
 });
+
+export const PricingSetupSchema = z.object({
+  base_price: z.number().positive('Base price must be greater than 0'),
+  currency: z.string().length(3).default('VND'),
+  early_bird_price: z.number().positive().optional(),
+  early_bird_deadline: z.string().datetime().optional(),
+}).refine((data) => {
+  if (data.early_bird_price !== undefined && data.early_bird_price >= data.base_price) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'Early bird price must be less than base price',
+  path: ['early_bird_price'],
+});
+
+export type PricingSetupInput = z.infer<typeof PricingSetupSchema>;
