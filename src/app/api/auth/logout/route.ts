@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
 import { deleteRefreshTokenHash } from '@/lib/auth/tokens';
 import { authenticateUser } from '@/lib/auth/middleware';
 import { auditLog } from '@/lib/auth/audit';
@@ -18,7 +17,7 @@ export async function POST(req: NextRequest) {
 
     // Read refresh token from cookies
     const refreshTokenCookie = req.cookies.get('refresh_token');
-    
+
     if (refreshTokenCookie && refreshTokenCookie.value) {
       try {
         await deleteRefreshTokenHash(refreshTokenCookie.value);

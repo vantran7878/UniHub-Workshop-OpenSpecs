@@ -9,7 +9,13 @@ export type AuditEvent =
   | 'TOKEN_BLACKLISTED'
   | 'ROLE_CHANGED'
   | 'PASSWORD_CHANGED'
-  | 'ACCOUNT_CREATED';
+  | 'ACCOUNT_CREATED'
+  | 'WORKSHOP_CREATED'
+  | 'WORKSHOP_UPDATED'
+  | 'WORKSHOP_CANCELLED'
+  | 'WORKSHOP_PUBLISHED'
+  | 'PRICING_UPDATED'
+  | 'CAPACITY_CHANGED';
 
 /**
  * Sanitizes metadata by removing sensitive information.
