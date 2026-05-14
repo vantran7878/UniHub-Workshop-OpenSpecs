@@ -2,9 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { deleteRefreshTokenHash } from '@/lib/auth/tokens';
 import { authenticateUser } from '@/lib/auth/middleware';
+import { auditLog } from '@/lib/auth/audit';
 
 export async function POST(req: NextRequest) {
   try {
+    const ipAddress = req.ip || req.headers.get('x-forwarded-for') || null;
+    const userAgent = req.headers.get('user-agent') || null;
+
     const user = authenticateUser(req);
     if (!user) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
@@ -25,23 +29,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Audit Log
-    const ipAddress = req.ip || req.headers.get('x-forwarded-for') || null;
-    const userAgent = req.headers.get('user-agent') || null;
-
-    try {
-      await prisma.auditLog.create({
-        data: {
-          action: 'LOGOUT',
-          actorId: userId,
-          resourceType: 'User',
-          resourceId: userId,
-          ipAddress,
-          userAgent,
-        },
-      });
-    } catch (e) {
-      console.error('Failed to log audit event', e);
-    }
+    auditLog('LOGOUT', { user_id: userId, ip: ipAddress }, { userId, ipAddress, userAgent });
 
     // Clear cookie and return 204
     const response = new NextResponse(null, { status: 204 });

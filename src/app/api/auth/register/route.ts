@@ -4,10 +4,12 @@ import { prisma } from '@/lib/prisma';
 import * as bcrypt from 'bcrypt';
 import { RegisterSchema } from '@/lib/validations/auth';
 import { registerRateLimiter, checkRateLimit } from '@/lib/rate-limiter';
+import { auditLog } from '@/lib/auth/audit';
 
 export async function POST(req: NextRequest) {
   try {
     const ipAddress = req.ip || req.headers.get('x-forwarded-for') || null;
+    const userAgent = req.headers.get('user-agent') || null;
     
     // Apply rate limit
     const rateLimitResponse = await checkRateLimit(registerRateLimiter, ipAddress);
@@ -53,18 +55,10 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      await tx.auditLog.create({
-        data: {
-          action: 'REGISTER_SUCCESS',
-          actorId: user.id,
-          resourceType: 'User',
-          resourceId: user.id,
-          userAgent: req.headers.get('user-agent') || null,
-        },
-      });
-
       return user;
     });
+
+    auditLog('REGISTER_SUCCESS', { user_id: newUser.id, ip: ipAddress }, { userId: newUser.id, ipAddress, userAgent });
 
     return NextResponse.json(
       {

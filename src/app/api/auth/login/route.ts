@@ -4,10 +4,12 @@ import * as bcrypt from 'bcrypt';
 import { LoginSchema } from '@/lib/validations/auth';
 import { generateAccessToken, generateRefreshToken, storeRefreshTokenHash } from '@/lib/auth/tokens';
 import { loginRateLimiter, checkRateLimit } from '@/lib/rate-limiter';
+import { auditLog } from '@/lib/auth/audit';
 
 export async function POST(req: NextRequest) {
   try {
     const ipAddress = req.ip || req.headers.get('x-forwarded-for') || null;
+    const userAgent = req.headers.get('user-agent') || null;
     
     // Apply rate limit
     const rateLimitResponse = await checkRateLimit(loginRateLimiter, ipAddress);
@@ -24,35 +26,25 @@ export async function POST(req: NextRequest) {
     }
 
     const { email, password } = validationResult.data;
-    const userAgent = req.headers.get('user-agent') || null;
 
     const user = await prisma.user.findUnique({
       where: { email },
     });
 
     if (!user || !user.isActive) {
-      await logAuditFailure(null, ipAddress, userAgent);
+      auditLog('LOGIN_FAILURE', { email_attempted: email, ip: ipAddress, reason: 'Invalid credentials' }, { ipAddress, userAgent });
       return NextResponse.json({ message: 'Invalid credentials' }, { status: 401 });
     }
 
     const passwordMatch = await bcrypt.compare(password, user.passwordHash);
     
     if (!passwordMatch) {
-      await logAuditFailure(user.id, ipAddress, userAgent);
+      auditLog('LOGIN_FAILURE', { email_attempted: email, ip: ipAddress, reason: 'Invalid credentials' }, { userId: user.id, ipAddress, userAgent });
       return NextResponse.json({ message: 'Invalid credentials' }, { status: 401 });
     }
 
     // Authentication successful
-    await prisma.auditLog.create({
-      data: {
-        action: 'LOGIN_SUCCESS',
-        actorId: user.id,
-        resourceType: 'User',
-        resourceId: user.id,
-        ipAddress,
-        userAgent,
-      },
-    });
+    auditLog('LOGIN_SUCCESS', { user_id: user.id, role: user.role, ip: ipAddress }, { userId: user.id, ipAddress, userAgent });
 
     const accessToken = generateAccessToken({ sub: user.id, role: user.role });
     const refreshToken = generateRefreshToken();
@@ -85,22 +77,5 @@ export async function POST(req: NextRequest) {
       { message: 'Internal server error' },
       { status: 500 }
     );
-  }
-}
-
-async function logAuditFailure(userId: string | null, ipAddress: string | null, userAgent: string | null) {
-  try {
-    await prisma.auditLog.create({
-      data: {
-        action: 'LOGIN_FAILURE',
-        actorId: userId,
-        resourceType: 'User',
-        resourceId: userId,
-        ipAddress,
-        userAgent,
-      },
-    });
-  } catch (e) {
-    console.error('Failed to log audit failure', e);
   }
 }

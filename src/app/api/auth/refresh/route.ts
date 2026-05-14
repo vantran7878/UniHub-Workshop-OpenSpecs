@@ -8,10 +8,12 @@ import {
   verifyRefreshTokenHash
 } from '@/lib/auth/tokens';
 import { refreshRateLimiter, checkRateLimit } from '@/lib/rate-limiter';
+import { auditLog } from '@/lib/auth/audit';
 
 export async function POST(req: NextRequest) {
   try {
     const ipAddress = req.ip || req.headers.get('x-forwarded-for') || null;
+    const userAgent = req.headers.get('user-agent') || null;
     
     // Apply rate limit
     const rateLimitResponse = await checkRateLimit(refreshRateLimiter, ipAddress);
@@ -65,19 +67,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Audit Log
-    const ipAddress = req.ip || req.headers.get('x-forwarded-for') || null;
-    const userAgent = req.headers.get('user-agent') || null;
-
-    await prisma.auditLog.create({
-      data: {
-        action: 'TOKEN_REFRESH',
-        actorId: user.id,
-        resourceType: 'User',
-        resourceId: user.id,
-        ipAddress,
-        userAgent,
-      },
-    });
+    auditLog('TOKEN_REFRESH', { user_id: user.id, ip: ipAddress }, { userId: user.id, ipAddress, userAgent });
 
     // Response
     const response = NextResponse.json(
