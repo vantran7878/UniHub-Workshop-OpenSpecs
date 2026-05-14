@@ -103,6 +103,8 @@ model Workshop {
   createdAt           DateTime       @default(now()) @map("created_at")
   updatedAt           DateTime       @updatedAt @map("updated_at")
   needsNotification   Boolean        @default(false) @map("needs_notification")
+  cancelledAt         DateTime?      @map("cancelled_at")
+  cancelledReason     String?        @map("cancelled_reason") @db.Text
 
   creator       User             @relation("WorkshopCreator", fields: [createdBy], references: [id])
   registrations Registration[]

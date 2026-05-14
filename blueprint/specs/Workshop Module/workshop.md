@@ -413,31 +413,6 @@ Tổng quan: Module được chia thành **6 feature** độc lập, có thể i
 
 ---
 
-### 5c. Export Participant List
-
-**Endpoint:** `GET /api/admin/workshops/:id/participants/export`
-
-**Query params:**
-| Param | Loại | Mô tả |
-|---|---|---|
-| `format` | string | `csv` hoặc `xlsx` (default: `csv`) |
-
-**Response:** File download với header:
-```
-Content-Disposition: attachment; filename="participants-<workshop-id>.csv"
-Content-Type: text/csv
-```
-
-**Việc cần làm:**
-- Generate file với các cột: `full_name`, `email`, `registered_at`, `payment_status`, `attendance_status`.
-- Stream response — không load toàn bộ data vào memory.
-
-**Acceptance criteria:**
-- Export 0 participants → file vẫn hợp lệ, chỉ có header row.
-- File CSV encode UTF-8 BOM để Excel Windows hiển thị tiếng Việt đúng.
-
----
-
 ### 5d. Aggregate Report
 
 **Endpoint:** `GET /api/admin/reports/workshops`

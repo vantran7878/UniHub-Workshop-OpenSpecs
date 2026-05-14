@@ -59,3 +59,9 @@ export const UpdateWorkshopSchema = z.object({
 });
 
 export type UpdateWorkshopInput = z.infer<typeof UpdateWorkshopSchema>;
+
+export const CancelWorkshopSchema = z.object({
+  reason: z.string().min(1, 'Reason is required'),
+});
+
+export type CancelWorkshopInput = z.infer<typeof CancelWorkshopSchema>;
