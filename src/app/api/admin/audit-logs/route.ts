@@ -4,13 +4,14 @@ import { authenticateUser, requireRole } from '@/lib/auth/middleware';
 import { z } from 'zod';
 
 const AuditLogQuerySchema = z.object({
-  action: z.string().optional(),
-  actor_id: z.string().uuid().optional(),
-  resource_id: z.string().uuid().optional(),
+  entity_type: z.string().optional(),
+  entity_id: z.string().uuid().optional(),
+  event_type: z.string().optional(),
+  admin_id: z.string().uuid().optional(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
   page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
-  limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+  limit: z.string().regex(/^\d+$/).transform(Number).optional().default('50'),
 });
 
 export async function GET(req: NextRequest) {
@@ -30,12 +31,14 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const { action, actor_id, resource_id, from, to, page, limit } = params.data;
+    const { entity_type, entity_id, event_type, admin_id, from, to, page, limit } = params.data;
 
     const where: any = {};
-    if (action) where.action = action;
-    if (actor_id) where.actorId = actor_id;
-    if (resource_id) where.resourceId = resource_id;
+    if (event_type) where.action = event_type;
+    if (admin_id) where.actorId = admin_id;
+    if (entity_type) where.resourceType = entity_type;
+    if (entity_id) where.resourceId = entity_id;
+    
     if (from || to) {
       where.createdAt = {};
       if (from) where.createdAt.gte = new Date(from);
@@ -48,15 +51,6 @@ export async function GET(req: NextRequest) {
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
-        include: {
-          actor: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            },
-          },
-        },
       }),
       prisma.auditLog.count({ where }),
     ]);
@@ -64,26 +58,21 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       data: logs.map(log => ({
         id: log.id,
-        action: log.action,
-        resource_type: log.resourceType,
-        resource_id: log.resourceId,
-        actor: log.actor ? {
-          id: log.actor.id,
-          name: log.actor.name,
-          email: log.actor.email,
-        } : null,
-        metadata: log.changes,
-        old_values: log.oldValues,
-        new_values: log.newValues,
+        event_type: log.action,
+        entity_type: log.resourceType,
+        entity_id: log.resourceId,
+        metadata: {
+          ...(log.changes as any || {}),
+          old_value: log.oldValues,
+          new_value: log.newValues,
+        },
         ip_address: log.ipAddress,
-        user_agent: log.userAgent,
         created_at: log.createdAt,
       })),
       pagination: {
-        total,
         page,
         limit,
-        total_pages: Math.ceil(total / limit),
+        total,
       },
     });
 
