@@ -1,167 +1,234 @@
 'use client'
 
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { generateAISummary } from '@/lib/actions/ai-summary'
-import { Loader2, Sparkles } from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
+import { summarizeWorkshopPDF, updateWorkshopDescription } from '@/lib/actions/workshop-pdf-summary'
+import { Loader2, Sparkles, Upload, Save } from 'lucide-react'
 
-export default function AISummaryPage() {
-  const [period, setPeriod] = useState<'week' | 'month' | 'all'>('month')
+export default function AIWorkshopSummaryPage() {
+  const supabase = createClient()
+  const [selectedWorkshopId, setSelectedWorkshopId] = useState<string>('')
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [loading, setLoading] = useState(false)
   const [summary, setSummary] = useState<string>('')
-  const [stats, setStats] = useState<any>(null)
+  const [saving, setSaving] = useState(false)
 
-  const handleGenerateSummary = async () => {
+  // Fetch workshops
+  const { data: workshops = [], isLoading: workshopsLoading } = useQuery({
+    queryKey: ['workshops'],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('workshops')
+        .select('id, title')
+        .order('start_time', { ascending: false })
+      return data || []
+    },
+  })
+
+  const handleProcessPDF = async () => {
+    if (!selectedWorkshopId || !pdfFile) {
+      alert('Vui lòng chọn workshop và upload file PDF')
+      return
+    }
+
     setLoading(true)
     setSummary('')
-    setStats(null)
-    
+
     try {
-      const result = await generateAISummary(period)
-      setSummary(result.summary || '')
-      setStats(result.stats)
+      // Read file as buffer
+      const arrayBuffer = await pdfFile.arrayBuffer()
+      const buffer = Buffer.from(arrayBuffer)
+
+      // Summarize PDF
+      const result = await summarizeWorkshopPDF(selectedWorkshopId, buffer)
+
+      if (result.success) {
+        setSummary(result.summary || '')
+      } else {
+        setSummary(`Lỗi: ${result.error || result.message}`)
+      }
     } catch (error) {
-      setSummary('Lỗi khi tạo tóm tắt. Vui lòng thử lại.')
+      setSummary(`Lỗi khi xử lý PDF: ${String(error)}`)
       console.error(error)
     } finally {
       setLoading(false)
     }
   }
 
+  const handleSaveSummary = async () => {
+    if (!selectedWorkshopId || !summary) {
+      alert('Không có nội dung để lưu')
+      return
+    }
+
+    setSaving(true)
+
+    try {
+      const result = await updateWorkshopDescription(selectedWorkshopId, summary)
+
+      if (result.success) {
+        alert('Cập nhật mô tả workshop thành công!')
+        setSummary('')
+        setPdfFile(null)
+        setSelectedWorkshopId('')
+      } else {
+        alert(`Lỗi: ${result.error}`)
+      }
+    } catch (error) {
+      alert(`Lỗi: ${String(error)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const selectedWorkshop = workshops.find(w => w.id === selectedWorkshopId)
+
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">AI Summary</h1>
+        <h1 className="text-3xl font-bold">AI Workshop Description</h1>
         <p className="text-muted-foreground mt-1">
-          Tóm tắt thông tin hệ thống bằng AI
+          Upload PDF của workshop, AI sẽ tóm tắt và cập nhật mô tả
         </p>
       </div>
 
-      {/* Period Selection */}
+      {/* Workshop Selection */}
       <Card>
         <CardHeader>
-          <CardTitle>Chọn kỳ thống kê</CardTitle>
+          <CardTitle>Chọn Workshop</CardTitle>
           <CardDescription>
-            Chọn khoảng thời gian để tạo tóm tắt
+            Chọn workshop bạn muốn cập nhật mô tả
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex gap-2 flex-wrap">
-            {(['week', 'month', 'all'] as const).map((p) => (
-              <Button
-                key={p}
-                variant={period === p ? 'default' : 'outline'}
-                onClick={() => setPeriod(p)}
-                disabled={loading}
-              >
-                {p === 'week' ? 'Tuần này' : p === 'month' ? 'Tháng này' : 'Toàn bộ'}
-              </Button>
-            ))}
-          </div>
-
-          <Button 
-            onClick={handleGenerateSummary}
-            disabled={loading}
-            className="w-full"
-            size="lg"
+        <CardContent>
+          <select
+            value={selectedWorkshopId}
+            onChange={(e) => {
+              setSelectedWorkshopId(e.target.value)
+              setSummary('')
+              setPdfFile(null)
+            }}
+            disabled={workshopsLoading}
+            className="w-full px-3 py-2 border border-input rounded-md bg-background"
           >
-            {loading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Đang tạo tóm tắt...
-              </>
-            ) : (
-              <>
-                <Sparkles className="mr-2 h-4 w-4" />
-                Tạo tóm tắt AI
-              </>
-            )}
-          </Button>
+            <option value="">-- Chọn workshop --</option>
+            {workshops.map((workshop) => (
+              <option key={workshop.id} value={workshop.id}>
+                {workshop.title}
+              </option>
+            ))}
+          </select>
         </CardContent>
       </Card>
 
-      {/* Statistics */}
-      {stats && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Tổng Workshops</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.totalWorkshops}</div>
-            </CardContent>
-          </Card>
+      {/* PDF Upload */}
+      {selectedWorkshopId && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Upload PDF</CardTitle>
+            <CardDescription>
+              Tải lên file PDF của workshop "{selectedWorkshop?.title}"
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-6 text-center hover:border-muted-foreground/50 transition-colors cursor-pointer">
+              <input
+                type="file"
+                accept=".pdf"
+                onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+                className="hidden"
+                id="pdf-input"
+                disabled={loading}
+              />
+              <label htmlFor="pdf-input" className="cursor-pointer">
+                {pdfFile ? (
+                  <div className="space-y-2">
+                    <p className="font-semibold text-green-600">{pdfFile.name}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {(pdfFile.size / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Upload className="h-8 w-8 mx-auto text-muted-foreground" />
+                    <p className="font-semibold">Click để chọn hoặc kéo thả file PDF</p>
+                    <p className="text-sm text-muted-foreground">PDF format, tối đa 10MB</p>
+                  </div>
+                )}
+              </label>
+            </div>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Tổng Đăng ký</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.totalRegistrations}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {stats.confirmedRegistrations} xác nhận
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Check-in</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.totalCheckIns}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {stats.attendanceRate}% tham dự
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Doanh thu</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {(stats.totalRevenue / 1000000).toFixed(1)}M
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {stats.totalRevenue.toLocaleString()} VND
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium">Tổng Users</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.totalUsers}</div>
-            </CardContent>
-          </Card>
-        </div>
+            <Button
+              onClick={handleProcessPDF}
+              disabled={!pdfFile || loading}
+              className="w-full"
+              size="lg"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Đang xử lý PDF...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  Tóm tắt bằng AI
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
       )}
 
-      {/* AI Summary */}
+      {/* Summary Result */}
       {summary && (
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-amber-500" />
-              <CardTitle>AI Tóm tắt</CardTitle>
-              <Badge variant="secondary">Powered by AI</Badge>
+              <CardTitle>Mô tả từ AI</CardTitle>
+              <Badge variant="secondary">Preview</Badge>
             </div>
             <CardDescription>
-              Phân tích chi tiết từ AI dựa trên dữ liệu hệ thống
+              Xem trước nội dung mô tả trước khi lưu
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="prose prose-sm max-w-none">
-              <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                {summary}
-              </div>
+          <CardContent className="space-y-4">
+            <div className="bg-muted p-4 rounded-lg whitespace-pre-wrap text-sm leading-relaxed">
+              {summary}
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                onClick={handleSaveSummary}
+                disabled={saving}
+                className="flex-1"
+                size="lg"
+              >
+                {saving ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Đang lưu...
+                  </>
+                ) : (
+                  <>
+                    <Save className="mr-2 h-4 w-4" />
+                    Lưu mô tả
+                  </>
+                )}
+              </Button>
+              <Button
+                onClick={() => setSummary('')}
+                variant="outline"
+                disabled={saving}
+              >
+                Hủy
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -170,7 +237,7 @@ export default function AISummaryPage() {
       {loading && !summary && (
         <Card>
           <CardHeader>
-            <CardTitle>Đang tạo tóm tắt...</CardTitle>
+            <CardTitle>Đang xử lý PDF...</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <Skeleton className="h-12 w-full" />
@@ -182,3 +249,4 @@ export default function AISummaryPage() {
     </div>
   )
 }
+
