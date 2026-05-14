@@ -7,9 +7,16 @@ import {
   deleteRefreshTokenHash,
   verifyRefreshTokenHash
 } from '@/lib/auth/tokens';
+import { refreshRateLimiter, checkRateLimit } from '@/lib/rate-limiter';
 
 export async function POST(req: NextRequest) {
   try {
+    const ipAddress = req.ip || req.headers.get('x-forwarded-for') || null;
+    
+    // Apply rate limit
+    const rateLimitResponse = await checkRateLimit(refreshRateLimiter, ipAddress);
+    if (rateLimitResponse) return rateLimitResponse;
+
     const refreshTokenCookie = req.cookies.get('refresh_token');
     if (!refreshTokenCookie || !refreshTokenCookie.value) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });

@@ -3,9 +3,16 @@ import { prisma } from '@/lib/prisma';
 import * as bcrypt from 'bcrypt';
 import { LoginSchema } from '@/lib/validations/auth';
 import { generateAccessToken, generateRefreshToken, storeRefreshTokenHash } from '@/lib/auth/tokens';
+import { loginRateLimiter, checkRateLimit } from '@/lib/rate-limiter';
 
 export async function POST(req: NextRequest) {
   try {
+    const ipAddress = req.ip || req.headers.get('x-forwarded-for') || null;
+    
+    // Apply rate limit
+    const rateLimitResponse = await checkRateLimit(loginRateLimiter, ipAddress);
+    if (rateLimitResponse) return rateLimitResponse;
+
     const body = await req.json();
 
     const validationResult = LoginSchema.safeParse(body);
@@ -17,7 +24,6 @@ export async function POST(req: NextRequest) {
     }
 
     const { email, password } = validationResult.data;
-    const ipAddress = req.ip || req.headers.get('x-forwarded-for') || null;
     const userAgent = req.headers.get('user-agent') || null;
 
     const user = await prisma.user.findUnique({

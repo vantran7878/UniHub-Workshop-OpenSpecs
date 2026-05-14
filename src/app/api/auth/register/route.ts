@@ -3,9 +3,16 @@ import { Role } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import * as bcrypt from 'bcrypt';
 import { RegisterSchema } from '@/lib/validations/auth';
+import { registerRateLimiter, checkRateLimit } from '@/lib/rate-limiter';
 
 export async function POST(req: NextRequest) {
   try {
+    const ipAddress = req.ip || req.headers.get('x-forwarded-for') || null;
+    
+    // Apply rate limit
+    const rateLimitResponse = await checkRateLimit(registerRateLimiter, ipAddress);
+    if (rateLimitResponse) return rateLimitResponse;
+
     const body = await req.json();
 
     const validationResult = RegisterSchema.safeParse(body);
