@@ -12,7 +12,8 @@ class AppTheme {
         seedColor: _primaryColor,
         brightness: Brightness.light,
       ),
-      fontFamily: 'BeVietnamPro',
+      // Remove custom font until assets are added
+      // fontFamily: 'BeVietnamPro',
       appBarTheme: const AppBarTheme(
         centerTitle: true,
         elevation: 0,
@@ -69,7 +70,8 @@ class AppTheme {
         seedColor: _primaryColor,
         brightness: Brightness.dark,
       ),
-      fontFamily: 'BeVietnamPro',
+      // Remove custom font until assets are added
+      // fontFamily: 'BeVietnamPro',
       appBarTheme: const AppBarTheme(
         centerTitle: true,
         elevation: 0,
