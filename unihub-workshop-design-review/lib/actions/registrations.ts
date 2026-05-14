@@ -4,6 +4,8 @@ import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import type { Registration } from '@/lib/types/database'
 import { v4 as uuidv4 } from 'uuid'
+import { sendRegistrationConfirmationEmail } from '@/lib/email/send-email'
+import QRCode from 'qrcode'
 
 export async function registerForWorkshop(workshopId: string) {
   const supabase = await createClient()
@@ -101,7 +103,56 @@ export async function registerForWorkshop(workshopId: string) {
   revalidatePath(`/workshops/${workshopId}`)
   
   if (isFreeWorkshop) {
-    return { success: true, message: 'Đăng ký thành công! Kiểm tra mã QR trong phần đăng ký của bạn.' }
+    // Send confirmation email with QR code
+    try {
+      const { data: userData } = await supabase
+        .from('users')
+        .select('full_name, email')
+        .eq('id', user.id)
+        .single()
+
+      const { data: workshopData } = await supabase
+        .from('workshops')
+        .select('title, start_time, room_name')
+        .eq('id', workshopId)
+        .single()
+
+      if (userData && workshopData && registration.qr_code) {
+        const qrCodeDataUrl = await QRCode.toDataURL(registration.qr_code, {
+          errorCorrectionLevel: 'H',
+          type: 'image/png',
+          width: 300,
+          margin: 1,
+        })
+
+        const startTime = new Date(workshopData.start_time)
+        const workshopDate = startTime.toLocaleDateString('vi-VN', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        })
+        const workshopTime = startTime.toLocaleTimeString('vi-VN', {
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+
+        await sendRegistrationConfirmationEmail({
+          studentEmail: userData.email,
+          studentName: userData.full_name,
+          workshopTitle: workshopData.title,
+          workshopDate,
+          workshopTime,
+          roomName: workshopData.room_name || 'TBD',
+          qrCodeDataUrl
+        })
+      }
+    } catch (emailError) {
+      console.error('[Registration Email Error]', emailError)
+      // Don't fail registration if email fails
+    }
+
+    return { success: true, message: 'Dang ky thanh cong! Kiem tra email de xem ma QR check-in.' }
   }
   
   return { 
@@ -231,11 +282,23 @@ export async function updateRegistrationStatus(
 ) {
   const supabase = await createClient()
 
+  // Fetch registration data for email
+  const { data: registration } = await supabase
+    .from('registrations')
+    .select('user_id, workshop_id, qr_code')
+    .eq('id', registrationId)
+    .single()
+
+  if (!registration) {
+    return { error: 'Khong tim thay dang ky' }
+  }
+
   const updateData: Record<string, unknown> = { status }
+  const finalQrCode = qrCode || registration.qr_code || uuidv4()
 
   if (status === 'confirmed') {
     updateData.confirmed_at = new Date().toISOString()
-    updateData.qr_code = qrCode || uuidv4()
+    updateData.qr_code = finalQrCode
   } else if (status === 'cancelled') {
     updateData.cancelled_at = new Date().toISOString()
   }
@@ -249,6 +312,57 @@ export async function updateRegistrationStatus(
     return { error: error.message }
   }
 
+  // Send email when confirmed
+  if (status === 'confirmed') {
+    try {
+      const { data: userData } = await supabase
+        .from('users')
+        .select('full_name, email')
+        .eq('id', registration.user_id)
+        .single()
+
+      const { data: workshopData } = await supabase
+        .from('workshops')
+        .select('title, start_time, room_name')
+        .eq('id', registration.workshop_id)
+        .single()
+
+      if (userData && workshopData) {
+        const qrCodeDataUrl = await QRCode.toDataURL(finalQrCode, {
+          errorCorrectionLevel: 'H',
+          type: 'image/png',
+          width: 300,
+          margin: 1,
+        })
+
+        const startTime = new Date(workshopData.start_time)
+        const workshopDate = startTime.toLocaleDateString('vi-VN', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        })
+        const workshopTime = startTime.toLocaleTimeString('vi-VN', {
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+
+        await sendRegistrationConfirmationEmail({
+          studentEmail: userData.email,
+          studentName: userData.full_name,
+          workshopTitle: workshopData.title,
+          workshopDate,
+          workshopTime,
+          roomName: workshopData.room_name || 'TBD',
+          qrCodeDataUrl
+        })
+      }
+    } catch (emailError) {
+      console.error('[Admin Confirmation Email Error]', emailError)
+    }
+  }
+
   revalidatePath('/admin/registrations')
+  revalidatePath('/admin/workshops')
   return { success: true }
 }

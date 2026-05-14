@@ -105,7 +105,7 @@ class _MainScaffoldState extends State<MainScaffold> {
         destinations: items.map((item) => NavigationDestination(
           icon: item.icon,
           selectedIcon: item.activeIcon,
-          label: item.label,
+          label: item.label ?? '',
         )).toList(),
       ),
     );

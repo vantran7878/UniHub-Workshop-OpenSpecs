@@ -64,18 +64,19 @@ class _CheckinPageState extends State<CheckinPage> {
   Future<void> _loadCheckinCount() async {
     if (_selectedWorkshopId == null) return;
 
-    final response = await Supabase.instance.client
-        .from('checkins')
-        .select('id', const FetchOptions(count: CountOption.exact))
-        .eq('workshop_id', _selectedWorkshopId!);
+    try {
+      final response = await Supabase.instance.client
+          .from('checkins')
+          .select('id')
+          .eq('workshop_id', _selectedWorkshopId!);
 
-    // Note: The count is returned as metadata
-    // For now, we'll count from the response
-    if (mounted) {
-      setState(() {
-        // This is a workaround - in production, use proper count
-        _checkinCount = (response as List).length;
-      });
+      if (mounted) {
+        setState(() {
+          _checkinCount = (response as List).length;
+        });
+      }
+    } catch (e) {
+      // Ignore errors
     }
   }
 
