@@ -1,0 +1,1291 @@
+# UniHub Workshop — Task Document
+
+> This document is the authoritative task reference for AI code-generation agents.
+> It is derived from the project proposal, technical design, and feature specifications.
+> Each task section contains: context, acceptance criteria, data models, API contracts, and implementation notes.
+
+---
+
+## Table of Contents
+
+1. [Project Overview](#1-project-overview)
+2. [System Architecture](#2-system-architecture)
+3. [Database Schema](#3-database-schema)
+4. [Redis Key Schema](#4-redis-key-schema)
+5. [Module: Auth](#5-module-auth)
+6. [Module: Workshop Manager](#6-module-workshop-manager)
+7. [Module: Booking / Registration](#7-module-booking--registration)
+8. [Module: Payment (Sandbox)](#8-module-payment-sandbox)
+9. [Module: Notification](#9-module-notification)
+10. [Module: Check-in](#10-module-check-in)
+11. [Module: AI PDF Summary](#11-module-ai-pdf-summary)
+12. [Module: CSV Import (Batch Worker)](#12-module-csv-import-batch-worker)
+13. [Module: Report](#13-module-report)
+14. [Cross-Cutting: Rate Limiting](#14-cross-cutting-rate-limiting)
+15. [Cross-Cutting: RBAC Middleware](#15-cross-cutting-rbac-middleware)
+16. [Frontend: Web App (Next.js)](#16-frontend-web-app-nextjs)
+17. [Frontend: Mobile App (Flutter)](#17-frontend-mobile-app-flutter)
+
+---
+
+## 1. Project Overview
+
+**UniHub Workshop** is a full-stack workshop registration and management platform for a university's annual "Skills & Career Week". It replaces a manual Google Form + email process and digitises the entire workshop lifecycle.
+
+### Scale Targets
+
+| Target | Metric |
+|--------|--------|
+| Concurrent registrations | ~12,000 students within the first 10 minutes of opening |
+| Traffic peak | 60% of load in the first 3 minutes |
+| Slot integrity | Zero double-booking — only one student receives the last seat |
+| Confirmation latency | QR code delivered within seconds of confirmed registration |
+| Offline check-in | Staff can record check-ins without network; auto-sync on reconnect |
+| Payment isolation | Payment gateway failure must NOT affect free workshop registration or schedule browsing |
+
+### User Roles
+
+| Role | Description |
+|------|-------------|
+| `student` | Browses workshops, registers (free or paid), receives QR code for check-in |
+| `admin` | Creates/edits/cancels workshops, monitors registrations, uploads PDF for AI summary |
+| `staff` | Uses mobile app to scan QR codes at the event door; works offline |
+
+### Out of Scope
+
+- Integration with real payment gateways (Momo, VNPay) in production
+- Direct API integration with the legacy student management system (CSV export only)
+- Production CI/CD, auto-scaling, monitoring infrastructure
+- Automatic refunds when a workshop is cancelled
+- Student-facing mobile app (students use the web app)
+
+---
+
+## 2. System Architecture
+
+### Style: Modular Monolith
+
+The backend is a single deployable Node.js (NestJS) process organised into clearly bounded modules. Modules communicate via internal function/service calls (not HTTP). RabbitMQ is used **only** for asynchronous background tasks (notifications, AI summary, CSV import) — never for synchronous module-to-module communication.
+
+### Component Stack
+
+| Component | Technology | Responsibility |
+|-----------|-----------|----------------|
+| Web App | Next.js (React, SSR) | Student dashboard, admin panel |
+| Mobile App | Flutter | Staff check-in (online + offline) |
+| API Gateway | Nginx | JWT pre-validation, Token Bucket rate limiting, routing |
+| Backend API | Node.js / NestJS | All business logic modules |
+| Database | PostgreSQL | Persistent relational data (ACID) |
+| Cache / Lock | Redis | Rate limiting counters, distributed locks, idempotency keys, seat counter cache |
+| Message Broker | RabbitMQ | Async queues: `notification.queue`, `ai_summary.generate` |
+| Batch Worker | Node.js cron job | Nightly CSV import (runs as a separate process) |
+| AI Worker | Node.js | Consumes PDF events, calls AI API, writes summary |
+
+### Communication Protocols
+
+| Flow | Protocol |
+|------|----------|
+| Client ↔ API Gateway | HTTPS REST |
+| Mobile App ↔ Backend (offline sync) | HTTPS REST + local SQLite queue |
+| Backend → RabbitMQ | AMQP |
+| Backend ↔ Redis | Redis Protocol (TCP) |
+| Backend ↔ PostgreSQL | TCP |
+
+### Resilience Design
+
+| Failing Component | Impact | Mitigation |
+|-------------------|--------|------------|
+| Payment Gateway | Paid workshop registration blocked | Circuit Breaker; free workshops & browsing unaffected |
+| RabbitMQ | Notifications & AI summary delayed | Registration still succeeds; broker retries on recovery |
+| Redis | Rate limiting & distributed lock unavailable | Fall back to DB-level lock (slower but correct) |
+| CSV Import | Student data not refreshed that night | Students already in DB can still register; alert sent |
+| Mobile network | Check-in not synced immediately | Stored in SQLite; auto-sync on reconnect |
+
+---
+
+## 3. Database Schema
+
+All tables use `UUID` primary keys generated by `gen_random_uuid()`.
+
+### 3.1 `users`
+
+```sql
+CREATE TABLE users (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    student_id      VARCHAR(50) UNIQUE NOT NULL,
+    full_name       VARCHAR(255) NOT NULL,
+    email           VARCHAR(255) UNIQUE NOT NULL,
+    phone           VARCHAR(20),
+    password_hash   VARCHAR(255),          -- bcrypt, 10 rounds
+    role            VARCHAR(20) NOT NULL DEFAULT 'student'
+                        CHECK (role IN ('student', 'admin', 'staff')),
+    is_active       BOOLEAN DEFAULT TRUE,
+    fcm_token       VARCHAR(500),          -- Firebase Cloud Messaging push token
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_users_role ON users(role);
+```
+
+**Notes:**
+- Student accounts are created exclusively via the nightly CSV import. Students **cannot** self-register.
+- `admin` and `staff` accounts are seeded via migration scripts.
+- `password_hash` is `NULL` for students until they set a password on first login.
+- `fcm_token` is updated by the mobile/web app after login.
+
+### 3.2 `workshops`
+
+```sql
+CREATE TABLE workshops (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title                 VARCHAR(255) NOT NULL,
+    description           TEXT,
+    speaker               VARCHAR(255),
+    room                  VARCHAR(100),
+    capacity              INT NOT NULL CHECK (capacity > 0),
+    start_time            TIMESTAMP NOT NULL,
+    end_time              TIMESTAMP NOT NULL,
+    is_paid               BOOLEAN DEFAULT FALSE,
+    price                 DECIMAL(10, 2) CHECK (price >= 0),
+    status                VARCHAR(20) NOT NULL DEFAULT 'active'
+                              CHECK (status IN ('active', 'cancelled', 'completed')),
+    registration_open_at  TIMESTAMP NOT NULL,
+    registration_close_at TIMESTAMP NOT NULL,
+    created_by            UUID NOT NULL REFERENCES users(id),
+    created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CHECK (end_time > start_time),
+    CHECK (registration_close_at > registration_open_at)
+);
+CREATE INDEX idx_workshops_status     ON workshops(status);
+CREATE INDEX idx_workshops_start_time ON workshops(start_time);
+CREATE INDEX idx_workshops_is_paid    ON workshops(is_paid);
+CREATE INDEX idx_workshops_created_by ON workshops(created_by);
+CREATE INDEX CONCURRENTLY idx_workshops_upcoming ON workshops(status, start_time);
+```
+
+### 3.3 `registrations`
+
+```sql
+CREATE TABLE registrations (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id               UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    workshop_id           UUID NOT NULL REFERENCES workshops(id) ON DELETE CASCADE,
+    status                VARCHAR(20) NOT NULL DEFAULT 'pending'
+                              CHECK (status IN ('pending','confirmed','cancelled','no_show','failed')),
+    qr_code               VARCHAR(255) UNIQUE,   -- NULL until status = 'confirmed'
+    qr_code_generated_at  TIMESTAMP,
+    created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, workshop_id)
+);
+CREATE INDEX idx_registrations_status      ON registrations(status);
+CREATE INDEX idx_registrations_user_id     ON registrations(user_id);
+CREATE INDEX idx_registrations_workshop_id ON registrations(workshop_id);
+CREATE INDEX CONCURRENTLY idx_registrations_user
+    ON registrations(user_id, status) WHERE status != 'cancelled';
+```
+
+**Status FSM:**
+`pending` → `confirmed` (payment success or free workshop) → `cancelled` | `no_show`
+`pending` → `failed` (payment failed)
+
+### 3.4 `payments`
+
+```sql
+CREATE TABLE payments (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    registration_id   UUID NOT NULL UNIQUE REFERENCES registrations(id) ON DELETE CASCADE,
+    user_id           UUID NOT NULL REFERENCES users(id),
+    amount            DECIMAL(10, 2) NOT NULL CHECK (amount > 0),
+    currency          VARCHAR(3) DEFAULT 'VND',
+    status            VARCHAR(20) NOT NULL DEFAULT 'pending'
+                          CHECK (status IN ('pending','processing','success','failed','refunded')),
+    payment_method    VARCHAR(50),
+    transaction_id    VARCHAR(255),
+    idempotency_key   VARCHAR(255) UNIQUE NOT NULL,
+    gateway_response  JSONB,
+    error_message     TEXT,
+    attempted_at      TIMESTAMP,
+    completed_at      TIMESTAMP,
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_payments_status     ON payments(status);
+CREATE INDEX idx_payments_created_at ON payments(created_at);
+CREATE INDEX idx_payments_user_id    ON payments(user_id);
+CREATE INDEX CONCURRENTLY idx_payments_pending
+    ON payments(user_id, status) WHERE status IN ('pending', 'processing');
+```
+
+### 3.5 `checkins`
+
+```sql
+CREATE TABLE checkins (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    registration_id UUID NOT NULL UNIQUE REFERENCES registrations(id) ON DELETE CASCADE,
+    user_id         UUID NOT NULL REFERENCES users(id),
+    workshop_id     UUID NOT NULL REFERENCES workshops(id),
+    checkin_time    TIMESTAMP NOT NULL,
+    device_id       VARCHAR(255),
+    location        VARCHAR(100),
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_checkins_checkin_time ON checkins(checkin_time);
+CREATE INDEX idx_checkins_user_id      ON checkins(user_id);
+CREATE INDEX idx_checkins_workshop_id  ON checkins(workshop_id);
+CREATE INDEX CONCURRENTLY idx_checkins_workshop
+    ON checkins(workshop_id, checkin_time);
+```
+
+### 3.6 `notifications`
+
+```sql
+CREATE TABLE notifications (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    registration_id UUID REFERENCES registrations(id) ON DELETE SET NULL,
+    type            VARCHAR(50) NOT NULL CHECK (type IN (
+                        'registration_confirmed','payment_success','payment_failed',
+                        'workshop_cancelled','reminder','checkin_success')),
+    content         TEXT NOT NULL,
+    status          VARCHAR(20) NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending','sent','failed','retrying')),
+    channels        JSONB DEFAULT '["app"]'::jsonb,
+    retry_count     INT DEFAULT 0,
+    last_retry_at   TIMESTAMP,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_notifications_status          ON notifications(status);
+CREATE INDEX idx_notifications_type            ON notifications(type);
+CREATE INDEX idx_notifications_created_at      ON notifications(created_at);
+CREATE INDEX idx_notifications_user_id         ON notifications(user_id);
+CREATE INDEX idx_notifications_registration_id ON notifications(registration_id);
+CREATE INDEX CONCURRENTLY idx_notifications_undelivered
+    ON notifications(user_id, created_at) WHERE status != 'sent';
+```
+
+### 3.7 `workshop_summaries`
+
+```sql
+CREATE TABLE workshop_summaries (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workshop_id           UUID NOT NULL UNIQUE REFERENCES workshops(id) ON DELETE CASCADE,
+    pdf_file_path         VARCHAR(500),
+    summary               TEXT,
+    status                VARCHAR(20) NOT NULL DEFAULT 'pending'
+                              CHECK (status IN ('pending','processing','done','failed')),
+    ai_model_used         VARCHAR(100),
+    processing_started_at TIMESTAMP,
+    completed_at          TIMESTAMP,
+    error_message         TEXT,
+    created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_workshop_summaries_status ON workshop_summaries(status);
+```
+
+### 3.8 `student_import_logs`
+
+```sql
+CREATE TABLE student_import_logs (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    file_name      VARCHAR(500) NOT NULL,
+    file_hash      VARCHAR(255),           -- MD5 hash for dedup check
+    status         VARCHAR(20) NOT NULL CHECK (status IN ('success','failed','partial','skipped')),
+    rows_processed INT DEFAULT 0,
+    rows_inserted  INT DEFAULT 0,
+    rows_updated   INT DEFAULT 0,
+    rows_skipped   INT DEFAULT 0,
+    error_log      TEXT,
+    error_details  JSONB,                  -- array of {row, error} objects
+    imported_at    TIMESTAMP NOT NULL,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_import_logs_status      ON student_import_logs(status);
+CREATE INDEX idx_import_logs_imported_at ON student_import_logs(imported_at);
+CREATE INDEX CONCURRENTLY idx_import_logs_recent
+    ON student_import_logs(imported_at DESC);
+```
+
+### 3.9 `audit_logs`
+
+```sql
+CREATE TABLE audit_logs (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_id      UUID REFERENCES users(id),
+    action        VARCHAR(50) NOT NULL,   -- e.g. CREATE_WORKSHOP, CANCEL_WORKSHOP
+    resource_type VARCHAR(50),
+    resource_id   UUID,
+    changes       JSONB,
+    old_values    JSONB,
+    new_values    JSONB,
+    ip_address    INET,
+    user_agent    TEXT,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_audit_logs_resource_type ON audit_logs(resource_type);
+CREATE INDEX idx_audit_logs_created_at    ON audit_logs(created_at);
+CREATE INDEX idx_audit_logs_actor_id      ON audit_logs(actor_id);
+```
+
+---
+
+## 4. Redis Key Schema
+
+| Key Pattern | Type | TTL | Description |
+|-------------|------|-----|-------------|
+| `ratelimit:global` | String (counter) | 60s | Global request counter |
+| `ratelimit:ip:{ip}` | Hash `{tokens, last_ts}` | 60s | Per-IP token bucket |
+| `ratelimit:user:{userId}` | Hash `{tokens, last_ts}` | 60s | Per-user token bucket |
+| `ratelimit:register:{userId}` | Hash `{tokens, last_ts}` | 60s | Per-user /register bucket |
+| `refresh:{token}` | Hash `{userId, role}` | 7 days | Refresh token store |
+| `jwt:blacklist:{jti}` | String `"1"` | Remaining access token TTL | Revoked JWT IDs |
+| `idempotency:{userId}:{workshopId}:{uuid}` | Hash `{status, payment_id, ...}` | 24h | Payment dedup cache |
+| `circuit:payment_gateway` | JSON `{state, failure_count, ...}` | 600s | Circuit breaker state |
+| `workshop:seats:{workshopId}` | Integer | No TTL | Cached available seat count (display only) |
+| `lock:csv_import` | String `{timestamp}` | 300s | Distributed lock for batch worker |
+
+---
+
+## 5. Module: Auth
+
+### Overview
+
+Handles login, token refresh, logout, and RBAC for all 3 roles (`student`, `admin`, `staff`). Uses RS256 JWT. The private key is held only by the Auth module; all other modules verify using the public key.
+
+### Task AUTH-01 — Login
+
+**Endpoint:** `POST /api/auth/login`
+
+**Request body:**
+```json
+{ "email": "string", "password": "string" }
+```
+
+**Behaviour:**
+1. API Gateway applies Token Bucket rate limit: **5 requests/min per IP** on this endpoint.
+2. `SELECT id, password_hash, role, is_active FROM users WHERE email = $1`.
+3. If not found or `is_active = false` → `401 Unauthorized`.
+4. `bcrypt.compare(password, password_hash)` → if mismatch → `401`.
+5. Sign **access token** (RS256, TTL: 15 min for `student`/`admin`; 8 hours for `staff`).
+   - Payload: `{ sub, role, email, iat, exp, jti }` — no sensitive fields.
+6. Generate **refresh token**: 32-byte cryptographically random hex string.
+7. `SET refresh:{refreshToken} = JSON.stringify({userId, role}) EX 604800` (7 days).
+8. Return `200` with `{ accessToken, refreshToken, user: { id, role, fullName, email } }`.
+
+**Error responses:**
+- `401` — wrong credentials or inactive account
+- `429` — rate limit exceeded (include `Retry-After` header)
+
+### Task AUTH-02 — Refresh Access Token
+
+**Endpoint:** `POST /api/auth/refresh`
+
+**Request body:** `{ "refreshToken": "string" }`
+
+**Behaviour:**
+1. `GET refresh:{refreshToken}` from Redis.
+2. If key missing → `401 Unauthorized`.
+3. Sign a new access token (same algorithm, TTL per role).
+4. **Do not rotate** the refresh token in this version.
+5. Return `200 { accessToken }`.
+
+### Task AUTH-03 — Logout
+
+**Endpoint:** `POST /api/auth/logout`
+
+**Headers:** `Authorization: Bearer <accessToken>`
+
+**Request body:** `{ "refreshToken": "string" }`
+
+**Behaviour (atomic Redis pipeline):**
+1. Verify access token (signature + expiry).
+2. `DEL refresh:{refreshToken}`.
+3. `SET jwt:blacklist:{jti} = "1" EX <remaining TTL of access token in seconds>`.
+4. Return `204 No Content`.
+
+### Task AUTH-04 — JWT Verification Middleware
+
+- Executed on **every protected route** in the backend (not just Gateway).
+- Verifies RS256 signature using the public key.
+- Checks `exp` and checks Redis blacklist for `jti`.
+- On success: attaches `{ userId: sub, role, email, jti }` to `req.jwtPayload`.
+- On failure: `401 Unauthorized`.
+
+### Acceptance Criteria — Auth Module
+
+- [ ] Login returns valid JWT for active student/admin/staff accounts.
+- [ ] Login returns `401` for wrong password or inactive account.
+- [ ] Staff access token TTL is 8 hours; student/admin is 15 minutes.
+- [ ] Refresh token is stored in Redis with 7-day TTL.
+- [ ] Refresh endpoint issues a new access token without requiring re-login.
+- [ ] Logout blacklists the JTI and deletes the refresh token atomically.
+- [ ] After logout, using the old access token before it expires is rejected (via blacklist check).
+- [ ] Login endpoint is rate-limited to 5 req/min per IP.
+
+---
+
+## 6. Module: Workshop Manager
+
+### Overview
+
+Admin-only CRUD for workshops. All write operations are logged to `audit_logs`.
+
+### Task WORKSHOP-01 — Create Workshop
+
+**Endpoint:** `POST /api/workshops` — role: `admin`
+
+**Request body:**
+```json
+{
+  "title": "string",
+  "description": "string",
+  "speaker": "string",
+  "room": "string",
+  "capacity": 60,
+  "start_time": "ISO8601",
+  "end_time": "ISO8601",
+  "is_paid": false,
+  "price": 0,
+  "registration_open_at": "ISO8601",
+  "registration_close_at": "ISO8601"
+}
+```
+
+**Behaviour:**
+1. Validate: `end_time > start_time`, `registration_close_at > registration_open_at`, `capacity > 0`.
+2. If `is_paid = true`, require `price > 0`.
+3. `INSERT INTO workshops (...)`.
+4. Initialise Redis seat counter: `SET workshop:seats:{id} {capacity}`.
+5. Insert into `audit_logs` with `action = 'CREATE_WORKSHOP'`.
+6. Return `201` with the created workshop object.
+
+### Task WORKSHOP-02 — Update Workshop
+
+**Endpoint:** `PUT /api/workshops/:id` — role: `admin`
+
+**Behaviour:**
+1. Fetch current workshop; if not found → `404`.
+2. Apply updates (partial updates allowed).
+3. If `room` or `start_time` changes → trigger `WORKSHOP_UPDATED` notification event (after commit).
+4. If `capacity` is decreased below `confirmed_count` → reject with `400` ("Cannot reduce capacity below current registrations").
+5. If `capacity` changes → update Redis seat counter accordingly.
+6. Update `audit_logs` with `old_values` and `new_values`.
+7. Return `200` with updated workshop.
+
+### Task WORKSHOP-03 — Cancel Workshop
+
+**Endpoint:** `DELETE /api/workshops/:id` — role: `admin`
+
+**Behaviour:**
+1. Set `workshops.status = 'cancelled'`.
+2. Publish `WORKSHOP_CANCELLED` notification event to `notification.queue` for all confirmed registrants.
+3. Insert `audit_logs` with `action = 'CANCEL_WORKSHOP'`.
+4. Return `200`.
+
+**Note:** Do not physically delete the workshop record. Cancellation is a status change.
+
+### Task WORKSHOP-04 — List Workshops
+
+**Endpoint:** `GET /api/workshops` — role: all
+
+**Query parameters:** `status`, `is_paid`, `page`, `limit` (default 20), `sort` (start_time asc/desc)
+
+**Behaviour:**
+1. Return paginated list of workshops.
+2. For each workshop, include a `seats_available` field. Read from Redis cache if present; otherwise compute `capacity - COUNT(registrations WHERE status='confirmed')` and cache it.
+3. Response includes `{ data: [], total, page, limit }`.
+
+### Task WORKSHOP-05 — Get Workshop Detail
+
+**Endpoint:** `GET /api/workshops/:id` — role: all
+
+Returns full workshop object including `seats_available` and, if a `workshop_summaries` record exists with `status = 'done'`, the `ai_summary` object.
+
+### Task WORKSHOP-06 — Get Participants
+
+**Endpoint:** `GET /api/workshops/:id/participants` — role: `admin`
+
+Returns list of confirmed registrants with `user_id`, `full_name`, `student_id`, `qr_code`, `checkin_status`.
+
+### Acceptance Criteria — Workshop Manager
+
+- [ ] Admin can create, update, and cancel workshops.
+- [ ] `student` and `staff` get `403` on write endpoints.
+- [ ] Capacity cannot be reduced below number of confirmed registrations.
+- [ ] Redis seat counter is updated on create/update.
+- [ ] `WORKSHOP_UPDATED` and `WORKSHOP_CANCELLED` events are published after DB commit.
+- [ ] All write operations are recorded in `audit_logs`.
+- [ ] List endpoint returns paginated results with correct `seats_available`.
+
+---
+
+## 7. Module: Booking / Registration
+
+### Overview
+
+Handles student registration for both free and paid workshops. Must be race-condition-safe (last seat cannot be double-booked) and protect against traffic spikes.
+
+### Task REG-01 — Register for a Free Workshop
+
+**Endpoint:** `POST /api/registrations` — role: `student`
+
+**Request body:** `{ "workshop_id": "uuid" }`
+
+**Behaviour:**
+1. API Gateway rate limit: 5 req/min per user on `/register`.
+2. **BEGIN TRANSACTION**.
+3. `SELECT capacity, (SELECT COUNT(*) FROM registrations WHERE workshop_id=$1 AND status='confirmed') AS confirmed_count FROM workshops WHERE id=$1 FOR UPDATE`.
+4. If `remaining = capacity - confirmed_count <= 0` → ROLLBACK → `409 { error: "Workshop is full" }`.
+5. If `registration_open_at > NOW()` → `400 { error: "Registration not open yet" }`.
+6. If `registration_close_at < NOW()` → `400 { error: "Registration closed" }`.
+7. `INSERT INTO registrations (user_id, workshop_id, status='confirmed', qr_code=gen_random_uuid())`.
+   - If unique constraint violated (user already registered) → ROLLBACK → `409 { error: "Already registered" }`.
+8. **COMMIT**.
+9. Decrement Redis seat counter: `DECR workshop:seats:{workshop_id}` (best-effort, non-blocking).
+10. Publish `REGISTRATION_CONFIRMED_FREE` event to `notification.queue` **after commit**.
+11. Return `200 { registration_id, qr_code, workshop_id, status: "confirmed" }`.
+
+### Task REG-02 — Register for a Paid Workshop
+
+**Endpoint:** `POST /api/registrations` — role: `student`
+
+**Request body:** `{ "workshop_id": "uuid", "idempotency_key": "uuid" }`
+
+**Behaviour:**
+1. Rate limit check (same as free).
+2. **BEGIN TRANSACTION**.
+3. Slot check with `SELECT ... FOR UPDATE` (same as free).
+4. `INSERT INTO registrations (user_id, workshop_id, status='pending')` — no QR code yet.
+5. **COMMIT**.
+6. Call `PaymentService.charge({ registrationId, userId, amount, idempotencyKey })` **synchronously** (direct function call, same process).
+7. If payment **succeeds**:
+   - UPDATE `registrations SET status='confirmed', qr_code=gen_random_uuid()`.
+   - Publish `REGISTRATION_CONFIRMED_PAID` to `notification.queue`.
+   - Return `200 { registration_id, qr_code, status: "confirmed" }`.
+8. If payment **fails** (declined):
+   - UPDATE `registrations SET status='failed'`.
+   - Increment Redis seat counter (release slot): `INCR workshop:seats:{workshop_id}`.
+   - Return `402 { error: "Payment declined" }`.
+9. If payment **times out** (gateway did not respond within 10s):
+   - Keep `registration.status = 'pending'`.
+   - Reconcile Worker will process later.
+   - Return `202 { registration_id, status: "pending", message: "Payment is being processed" }`.
+10. If Circuit Breaker is OPEN:
+    - DELETE the pending registration, release slot.
+    - Return `503 { error: "Payment temporarily unavailable" }`.
+
+### Task REG-03 — Cancel Registration
+
+**Endpoint:** `POST /api/registrations/:id/cancel` — role: `student` (own only) or `admin`
+
+**Behaviour:**
+1. Verify ownership for `student` role.
+2. If `status` is already `cancelled` → `400`.
+3. If workshop `start_time` has passed and role is `student` → `400` (cannot cancel past workshops).
+4. UPDATE `registrations SET status='cancelled'`.
+5. If `status` was `confirmed`, increment seat counter in Redis.
+6. Publish `REGISTRATION_CANCELLED` event to `notification.queue`.
+7. Return `200`.
+
+### Task REG-04 — List My Registrations
+
+**Endpoint:** `GET /api/my-registrations` — role: `student`
+
+Returns paginated list of the authenticated student's own registrations with nested workshop info.
+
+### Task REG-05 — List All Registrations (Admin)
+
+**Endpoint:** `GET /api/registrations` — role: `admin`
+
+Supports filters: `workshop_id`, `status`, `page`, `limit`.
+
+### Acceptance Criteria — Booking
+
+- [ ] Concurrent last-seat registrations: only one student receives the seat (`SELECT FOR UPDATE` prevents double-booking).
+- [ ] Free workshop: `status=confirmed` + QR code returned immediately.
+- [ ] Paid workshop with successful payment: `status=confirmed` + QR code.
+- [ ] Paid workshop with declined payment: `status=failed`, seat released, `402` returned.
+- [ ] Paid workshop with gateway timeout: `status=pending`, `202` returned; reconcile worker resolves later.
+- [ ] Already-registered student gets `409`.
+- [ ] Full workshop gets `409`.
+- [ ] Student cannot cancel someone else's registration (`403`).
+- [ ] Cancellation releases seat counter in Redis.
+- [ ] Notification event is published **after** DB commit (not inside transaction).
+
+---
+
+## 8. Module: Payment (Sandbox)
+
+### Overview
+
+Called synchronously by Registration Service. Never called directly by clients. Implements idempotency, Circuit Breaker, and sandbox gateway simulation.
+
+### Task PAY-01 — Process Payment
+
+**Internal function signature:**
+```typescript
+PaymentService.charge({
+  registrationId: string;
+  userId: string;
+  amount: number;
+  idempotencyKey: string;  // UUID generated by client, passed in registration request
+}): Promise<{ status: 'success' | 'failed' | 'timeout' | 'circuit_open' }>
+```
+
+**Behaviour:**
+1. **Idempotency check**: `GET idempotency:{userId}:{workshopId}:{idempotencyKey}` from Redis.
+   - If `status = 'processing'` → return `{ status: 'processing' }` (202).
+   - If `status = 'success'` → return cached success (do not charge again).
+   - If `status = 'failed'` → return cached failure.
+   - If MISS → proceed.
+2. `SET idempotency:{...} = {status: 'processing'} NX EX 86400` (atomic, prevents parallel duplicate).
+3. Check Circuit Breaker state in Redis (`circuit:payment_gateway`):
+   - If `state = 'open'` → return `{ status: 'circuit_open' }`.
+4. `INSERT INTO payments (registration_id, user_id, amount, idempotency_key, status='processing', attempted_at=NOW())`.
+5. Call Sandbox Gateway `POST /charge` with 10s timeout.
+6. **On success** (HTTP 200):
+   - `UPDATE payments SET status='success', transaction_id=..., completed_at=NOW()`.
+   - `SET idempotency:{...} = {status: 'success', payment_id, amount} EX 86400`.
+   - Reset Circuit Breaker failure counter (if CLOSED or HALF-OPEN success).
+   - Return `{ status: 'success' }`.
+7. **On declined** (HTTP 402):
+   - `UPDATE payments SET status='failed', error_message='declined'`.
+   - `SET idempotency:{...} = {status: 'failed', error: 'declined'} EX 86400`.
+   - Return `{ status: 'failed' }`.
+8. **On gateway error** (HTTP 5xx) or timeout:
+   - Increment Circuit Breaker failure counter in Redis.
+   - If failure count reaches 5 within 30s → set `state = 'open'`.
+   - `UPDATE payments SET status='failed', error_message='gateway_error_or_timeout'`.
+   - Return `{ status: 'timeout' }` or `{ status: 'failed' }`.
+
+### Task PAY-02 — Sandbox Gateway
+
+The Sandbox Gateway is a local mock Express server or NestJS controller that simulates real gateway behaviour.
+
+**Trigger rules (based on `amount` last digits or `X-Sandbox-Scenario` header):**
+
+| Scenario | Trigger | Response |
+|----------|---------|----------|
+| `success` | Default | `200 { status: "success", transaction_id: "txn_..." }` |
+| `timeout` | `amount` ends in `.99` or header `timeout` | No response for 15s |
+| `declined` | `amount` ends in `.00` or header `declined` | `402 { status: "declined", reason: "insufficient_funds" }` |
+| `gateway_error` | Header `error` | `500 { status: "error" }` — counted toward Circuit Breaker |
+
+### Task PAY-03 — Circuit Breaker
+
+State machine stored in Redis key `circuit:payment_gateway`:
+
+```json
+{
+  "state": "closed|open|half_open",
+  "failure_count": 0,
+  "last_failure_at": 0,
+  "opened_at": 0,
+  "success_count_half_open": 0
+}
+```
+
+**Thresholds:**
+- `failureThreshold`: 5 consecutive failures within 30s → CLOSED → OPEN
+- `timeout`: 60s in OPEN before testing (→ HALF-OPEN)
+- `successThreshold`: 2 successes in HALF-OPEN → CLOSED
+- `requestTimeout`: 10s per gateway call
+
+**Graceful degradation:** When Circuit Breaker is OPEN, only paid workshop registration is blocked. Free workshop registration, schedule browsing, and check-in are completely unaffected.
+
+### Task PAY-04 — Reconcile Worker
+
+A background job that runs every 5 minutes and processes `payments` records with `status = 'processing'` older than 15 minutes (indicating a lost gateway response).
+
+**Behaviour:**
+1. Query `SELECT * FROM payments WHERE status='processing' AND attempted_at < NOW() - INTERVAL '15 minutes'`.
+2. For each: query the sandbox gateway's `/status/{transaction_id}` endpoint.
+3. Update `payments` and `registrations` status accordingly.
+4. Publish the appropriate notification event.
+
+### Acceptance Criteria — Payment
+
+- [ ] Duplicate request with same idempotency key does not charge twice.
+- [ ] Redis `SET NX` prevents two simultaneous requests with the same key from both proceeding.
+- [ ] After 5 gateway failures in 30s, Circuit Breaker opens.
+- [ ] OPEN Circuit Breaker fast-fails paid registrations immediately.
+- [ ] OPEN Circuit Breaker does NOT affect free workshop registration.
+- [ ] Circuit Breaker enters HALF-OPEN after 60s and tests one request.
+- [ ] Declined payment triggers seat release and `status=failed` on the registration.
+- [ ] Timeout payment leaves `status=pending`; reconcile worker processes it.
+
+---
+
+## 9. Module: Notification
+
+### Overview
+
+Fully asynchronous. Business modules publish events to `notification.queue` on RabbitMQ **after** DB commit. A Notification Worker consumes and dispatches via adapters.
+
+### Task NOTIF-01 — Notification Worker
+
+The worker runs as a separate process within the backend application.
+
+**Supported event types:**
+
+| Event Type | Trigger | Channels |
+|------------|---------|----------|
+| `REGISTRATION_CONFIRMED_FREE` | Free workshop registration confirmed | Email + Push |
+| `REGISTRATION_CONFIRMED_PAID` | Paid workshop registration confirmed | Email + Push |
+| `REGISTRATION_CANCELLED` | Student or admin cancelled registration | Email + Push |
+| `WORKSHOP_UPDATED` | Admin changed time or room | Email + Push |
+| `WORKSHOP_CANCELLED` | Admin cancelled entire workshop | Email + Push |
+| `CHECKIN_CONFIRMED` | Check-in recorded at event | Push only |
+| `PAYMENT_FAILED` | Payment gateway failed or declined | Push only |
+
+**RabbitMQ Message Schema:**
+```json
+{
+  "eventId":        "uuid-v4",
+  "eventType":      "REGISTRATION_CONFIRMED_FREE",
+  "userId":         "uuid",
+  "workshopId":     "uuid",
+  "registrationId": "uuid",
+  "payload": {
+    "workshopTitle":  "string",
+    "workshopDate":   "ISO8601",
+    "workshopRoom":   "string",
+    "speakerName":    "string",
+    "qrCode":         "string|null",
+    "price":          "number|null"
+  },
+  "publishedAt": "ISO8601"
+}
+```
+
+**Worker processing steps:**
+1. Parse and validate `eventType`.
+2. `SELECT email, full_name, fcm_token FROM users WHERE id = event.userId`.
+3. Look up `EVENT_CHANNEL_MAP[eventType]` → resolve which adapters to use.
+4. `Promise.allSettled([EmailAdapter.send(...), PushAdapter.send(...)])`.
+5. `INSERT INTO notifications (user_id, registration_id, type, content, status, channels)`.
+6. If any adapter fails: set `status='retrying'`, increment `retry_count`, retry up to 3 times with exponential back-off (1s → 2s → 4s). After 3 failures: `status='failed'`.
+7. `ack()` the RabbitMQ message only after all adapters are processed (at-least-once delivery).
+
+### Task NOTIF-02 — Email Adapter
+
+- Implements `send(to: string, subject: string, htmlBody: string)`.
+- Uses SMTP / SendGrid / AWS SES (configured via `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` env vars).
+- Email templates per event type (HTML with workshop details).
+
+### Task NOTIF-03 — Push Notification Adapter
+
+- Implements `send(fcmToken: string, title: string, body: string, data: object)`.
+- Uses Firebase Cloud Messaging (configured via `FCM_SERVER_KEY` env var).
+- If `fcm_token` is null for a user, skip push silently.
+
+### Acceptance Criteria — Notification
+
+- [ ] Events are published **after** DB transaction commits, never inside the transaction.
+- [ ] If RabbitMQ publish fails, the registration still returns success to the student.
+- [ ] Worker processes at-least-once (acks only after dispatching).
+- [ ] Failed notifications are retried up to 3 times with exponential back-off.
+- [ ] Adding a new channel (e.g., Telegram) requires only a new Adapter class — no business module changes.
+- [ ] Notification records are written to the `notifications` table.
+
+---
+
+## 10. Module: Check-in
+
+### Overview
+
+Used exclusively by `staff` role via the Flutter mobile app. Supports online and offline modes. Offline mode requires a pre-load step (downloading valid QR codes to local SQLite) before the event.
+
+### Task CHECKIN-01 — Preload QR Codes
+
+**Endpoint:** `GET /api/checkin/preload?workshop_id={id}` — role: `staff`
+
+**Behaviour:**
+1. `SELECT r.qr_code, u.full_name, u.student_id FROM registrations r JOIN users u ON u.id = r.user_id WHERE r.workshop_id=$1 AND r.status='confirmed'`.
+2. Return `200 { workshopId, preloadedAt, records: [{qr_code, studentName, studentId}] }`.
+
+**Mobile App behaviour after receiving:**
+- Store in local SQLite table `valid_qr_codes (qr_code, student_name, student_id, workshop_id, preloaded_at)`.
+
+### Task CHECKIN-02 — Online Check-in
+
+**Endpoint:** `POST /api/checkin` — role: `staff`
+
+**Request body:**
+```json
+{ "qr_code": "uuid", "workshop_id": "uuid", "device_id": "string" }
+```
+
+**Behaviour:**
+1. `SELECT r.id, r.status, u.full_name, u.student_id FROM registrations r JOIN users u ON u.id=r.user_id WHERE r.qr_code=$1 AND r.workshop_id=$2`.
+2. If not found → `404 { error: "Invalid QR code" }`.
+3. If `r.status != 'confirmed'` → `422 { error: "Registration not confirmed" }`.
+4. Check `SELECT id FROM checkins WHERE registration_id=$1`. If exists → `409 { error: "Already checked in", checked_in_at }`.
+5. `INSERT INTO checkins (registration_id, user_id, workshop_id, checkin_time=NOW(), device_id)`.
+6. Publish `CHECKIN_CONFIRMED` to `notification.queue`.
+7. Return `200 { student_name, student_id, checked_in_at }`.
+
+### Task CHECKIN-03 — Offline Check-in (Mobile App Logic)
+
+**This is implemented entirely in Flutter (local SQLite logic):**
+
+When network is unavailable:
+1. Scan QR → lookup `valid_qr_codes` table in SQLite.
+2. If not found → display "Invalid QR for this event".
+3. If found → check `offline_checkins` table for existing record with same `qr_code`.
+4. If already checked in → display "Already checked in at {time}".
+5. If not → `INSERT INTO offline_checkins (id=uuid, qr_code, workshop_id, checked_in_at=NOW(), device_id, is_synced=0)`.
+6. Display "✅ Check-in OK (Offline) — {student_name}".
+
+**SQLite schema (on device):**
+```sql
+CREATE TABLE valid_qr_codes (
+  qr_code      TEXT NOT NULL,
+  student_name TEXT NOT NULL,
+  student_id   TEXT NOT NULL,
+  workshop_id  TEXT NOT NULL,
+  preloaded_at TEXT NOT NULL,
+  PRIMARY KEY (qr_code, workshop_id)
+);
+
+CREATE TABLE offline_checkins (
+  id            TEXT PRIMARY KEY,
+  qr_code       TEXT NOT NULL,
+  workshop_id   TEXT NOT NULL,
+  checked_in_at TEXT NOT NULL,
+  device_id     TEXT NOT NULL,
+  is_synced     INTEGER NOT NULL DEFAULT 0,  -- 0: pending, 1: synced, 2: conflict
+  sync_error    TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (qr_code, workshop_id)
+);
+CREATE INDEX idx_offline_unsynced ON offline_checkins(is_synced) WHERE is_synced = 0;
+```
+
+### Task CHECKIN-04 — Offline Sync
+
+**Endpoint:** `POST /api/checkin/sync-offline` — role: `staff`
+
+**Request body:**
+```json
+{
+  "records": [
+    { "qr_code": "uuid", "workshop_id": "uuid", "checked_in_at": "ISO8601", "device_id": "string" },
+    ...
+  ]
+}
+```
+
+**Behaviour (server-side, for each record):**
+1. `SELECT r.id, r.user_id, r.workshop_id FROM registrations r WHERE r.qr_code=$1 AND r.workshop_id=$2 AND r.status='confirmed'`.
+2. If not found → skip, return `status: 'invalid'` for this record.
+3. `INSERT INTO checkins (..., checkin_time=$checked_in_at) ON CONFLICT (registration_id) DO NOTHING`.
+4. If `DO NOTHING` triggered → mark as `status: 'duplicate'` (already checked in from another device).
+5. Publish `CHECKIN_CONFIRMED` notification for newly inserted records.
+
+**Response:**
+```json
+{
+  "synced": 10,
+  "skipped": 2,
+  "duplicates": 1,
+  "results": [{ "qr_code": "...", "status": "synced|duplicate|invalid" }]
+}
+```
+
+**Mobile App sync trigger:**
+- App detects network restoration.
+- Query `SELECT * FROM offline_checkins WHERE is_synced = 0`.
+- Batch-send to sync endpoint.
+- On success: `UPDATE offline_checkins SET is_synced=1` for returned synced/duplicate records.
+- On failure: keep `is_synced=0`, retry after 60s.
+
+### Acceptance Criteria — Check-in
+
+- [ ] Preload endpoint returns all confirmed QR codes for a given workshop.
+- [ ] Online check-in rejects invalid QR, unconfirmed registration, and duplicate check-in.
+- [ ] Offline check-in prevents duplicate scan on the same device (SQLite `UNIQUE` constraint).
+- [ ] Offline sync correctly inserts new check-ins and silently ignores duplicates.
+- [ ] Staff with no preload data cannot check in offline.
+- [ ] `CHECKIN_CONFIRMED` notification is published after successful server-side check-in.
+
+---
+
+## 11. Module: AI PDF Summary
+
+### Overview
+
+Admin uploads a PDF for a workshop; the system asynchronously extracts text, cleans it, calls an AI summarisation service, and saves the result. Students can view the summary on the workshop detail page.
+
+### Task AI-01 — Upload PDF
+
+**Endpoint:** `POST /api/workshops/:id/pdf` — role: `admin`
+
+**Content-Type:** `multipart/form-data`
+
+**Validation:**
+- File type: `application/pdf` only.
+- Max size: 10 MB.
+
+**Behaviour:**
+1. Validate file (type, size).
+2. Save file to disk: `/uploads/pdf/{workshopId}/{uuid}.pdf`.
+3. `INSERT INTO workshop_summaries (workshop_id, pdf_file_path, status='pending') ON CONFLICT (workshop_id) DO UPDATE SET pdf_file_path=..., status='pending', updated_at=NOW()`.
+4. Publish event to RabbitMQ queue `ai_summary.generate`:
+   ```json
+   { "workshopId": "uuid", "filePath": "/uploads/pdf/...", "summaryId": "uuid" }
+   ```
+5. Return `202 { summary_id, status: "pending" }`.
+
+### Task AI-02 — AI Worker Processing Pipeline
+
+**Trigger:** Consume event from `ai_summary.generate`.
+
+**Steps:**
+1. `UPDATE workshop_summaries SET status='processing', processing_started_at=NOW() WHERE id=$summaryId`.
+2. Read PDF file from `filePath`. If not found → `UPDATE status='failed', error_message='file_not_found'` → ack.
+3. Extract text using `pdf-parse` or `pdfjs-dist`.
+4. If PDF is encrypted or has no text layer → `UPDATE status='failed', error_message='unreadable_pdf'` → ack.
+5. Clean text:
+   - Remove repeated headers/footers.
+   - Normalise whitespace and newlines.
+   - Truncate to max **12,000 tokens** (≈ 48,000 characters).
+6. Call AI Summarisation API:
+   ```http
+   POST {AI_API_URL}/summarize
+   Authorization: Bearer {AI_API_KEY}
+   Content-Type: application/json
+
+   {
+     "model": "{AI_MODEL}",
+     "text": "<cleaned_text>",
+     "instruction": "Summarise this workshop content in Vietnamese. Structure: Topic, Key Points, Highlights (max 5 points). ~200-300 words."
+   }
+   ```
+   Timeout: **60 seconds**.
+7. If AI call succeeds:
+   - `UPDATE workshop_summaries SET status='done', summary=..., ai_model_used=..., completed_at=NOW()`.
+8. If AI call fails after 3 retries:
+   - `UPDATE workshop_summaries SET status='failed', error_message='ai_api_error'`.
+9. Always ack the message (do not requeue on AI failure — prevents infinite loop).
+
+### Task AI-03 — Poll Summary Status
+
+**Endpoint:** `GET /api/workshops/:id/summary` — role: all
+
+**Response:**
+```json
+{
+  "status": "pending|processing|done|failed",
+  "summary": "string|null",
+  "ai_model_used": "string|null",
+  "completed_at": "ISO8601|null",
+  "error_message": "string|null"
+}
+```
+
+- Frontend polls every 5 seconds while `status` is `pending` or `processing`.
+- Stops polling when `status` is `done` or `failed`.
+
+### Acceptance Criteria — AI Summary
+
+- [ ] Upload returns `202` immediately (non-blocking).
+- [ ] `workshop_summaries` record is created with `status='pending'` on upload.
+- [ ] AI Worker sets status to `'processing'` before starting, then `'done'` or `'failed'`.
+- [ ] Unreadable or encrypted PDFs fail gracefully with a descriptive error.
+- [ ] AI API timeout (60s) results in `status='failed'`.
+- [ ] Students see the summary on the workshop detail page when `status='done'`.
+- [ ] Re-uploading a PDF for the same workshop replaces the existing `workshop_summaries` record.
+
+---
+
+## 12. Module: CSV Import (Batch Worker)
+
+### Overview
+
+Runs as a standalone Node.js cron job at **02:00 AM** every night. Reads a CSV file exported by the legacy student management system, validates and upserts student records into `users`, and soft-deletes students no longer in the file.
+
+### Task CSV-01 — Batch Worker Main Flow
+
+**CSV File Location:** Configured via env var `CSV_IMPORT_PATH` (e.g., `/data/students.csv`).
+
+**Required columns:** `student_id`, `full_name`, `email`.
+**Optional columns:** `phone`.
+
+**Steps:**
+
+1. **Acquire distributed lock:** `SET lock:csv_import {timestamp} EX 300 NX`.
+   - If lock exists (previous job still running) → log `status='skipped_lock'` → exit.
+
+2. **Check file exists.** If not → log `status='failed'`, send admin alert email → release lock → exit.
+
+3. **Check duplicate import:** Compute MD5 hash of the file. `SELECT id FROM student_import_logs WHERE file_hash=$1`. If found → log `status='skipped'` → release lock → exit.
+
+4. **Validate header row.** Check for required columns. If missing → log `status='failed'` → release lock → exit.
+
+5. **Stream and process in batches of 500 rows:**
+   - For each row: validate email format, ensure `student_id` is non-empty.
+   - Deduplicate within the batch (keep latest by row order).
+   - Skip invalid rows, increment `error_count`, append to `error_details` JSONB.
+   - For each valid batch:
+     ```sql
+     BEGIN;
+     INSERT INTO users (student_id, full_name, email, phone, role, is_active)
+     VALUES (...)
+     ON CONFLICT (student_id)
+     DO UPDATE SET
+       full_name  = EXCLUDED.full_name,
+       email      = EXCLUDED.email,
+       phone      = EXCLUDED.phone,
+       is_active  = TRUE,
+       updated_at = NOW()
+     WHERE users.role = 'student';
+     COMMIT;
+     ```
+   - Retry failed batches up to 3 times with exponential back-off (1s → 2s → 4s).
+   - Track `inserted`, `updated`, `skipped` counts.
+
+6. **Soft-delete inactive students:**
+   ```sql
+   UPDATE users
+   SET is_active = FALSE, updated_at = NOW()
+   WHERE role = 'student'
+     AND student_id NOT IN (<all student_ids from CSV>)
+     AND is_active = TRUE;
+   ```
+
+7. **Write import log:**
+   ```sql
+   INSERT INTO student_import_logs
+   (file_name, file_hash, status, rows_processed, rows_inserted, rows_updated,
+    rows_skipped, error_log, error_details, imported_at)
+   VALUES (...);
+   ```
+
+8. **Release lock:** `DEL lock:csv_import`.
+
+### Task CSV-02 — Error Scenarios
+
+| Scenario | Action |
+|----------|--------|
+| File not found | Log `failed`, alert admin, no DB changes |
+| File unreadable (permission) | Log `failed`, alert admin, no DB changes |
+| Hash match (duplicate file) | Log `skipped`, no DB changes |
+| Missing required column | Log `failed`, stop immediately |
+| Invalid row (bad email, empty student_id) | Skip row, count error, continue |
+| DB error in batch | Rollback batch, retry 3x; if all fail → `partial`, continue next batch |
+| Job runs twice (concurrent cron) | 2nd job sees Redis lock → `skipped_lock` |
+| Worker crashes mid-run | Lock TTL of 300s auto-expires; next run retries from scratch |
+
+### Acceptance Criteria — CSV Import
+
+- [ ] Job runs at 02:00 AM and acquires Redis lock.
+- [ ] Duplicate file (same hash) is skipped without changing DB.
+- [ ] `admin` and `staff` accounts are never overwritten by CSV (WHERE clause guards `role = 'student'`).
+- [ ] Students removed from CSV are soft-deleted (`is_active = FALSE`), not physically deleted.
+- [ ] Import log record is always written (success, partial, or failed).
+- [ ] Invalid rows are skipped; job continues processing remaining rows.
+- [ ] Admin receives an email alert if the file is missing.
+
+---
+
+## 13. Module: Report
+
+### Overview
+
+Admin-only statistics endpoints for monitoring workshop performance.
+
+### Task REPORT-01 — Workshop Statistics
+
+**Endpoint:** `GET /api/workshops/statistics` — role: `admin`
+
+**Response:**
+```json
+{
+  "total_workshops": 40,
+  "active_workshops": 35,
+  "total_registrations": 1800,
+  "total_checkins": 1200,
+  "attendance_rate": 0.667,
+  "by_workshop": [
+    {
+      "workshop_id": "uuid",
+      "title": "string",
+      "capacity": 60,
+      "confirmed_count": 58,
+      "checkin_count": 45,
+      "attendance_rate": 0.776
+    }
+  ]
+}
+```
+
+### Task REPORT-02 — Single Workshop Stats
+
+**Endpoint:** `GET /api/workshops/:id/statistics` — role: `admin`
+
+Returns per-workshop confirmed count, check-in count, cancellation count, no-show count, and revenue (for paid workshops).
+
+### Acceptance Criteria — Report
+
+- [ ] Statistics are computed from live DB data.
+- [ ] `student` and `staff` roles get `403`.
+- [ ] Revenue figures are only shown for paid workshops.
+
+---
+
+## 14. Cross-Cutting: Rate Limiting
+
+Implemented as a Lua script executed atomically on Redis (Token Bucket algorithm).
+
+### Rate Limit Tiers
+
+| Tier | Redis Key | Limit | Applied To |
+|------|-----------|-------|------------|
+| Global | `ratelimit:global` | 60,000 req/min | All requests |
+| Per IP | `ratelimit:ip:{ip}` | 120 req/min | All requests |
+| Per User | `ratelimit:user:{userId}` | 60 req/min | All authenticated requests |
+| Per User + /register | `ratelimit:register:{userId}` | 5 req/min | `POST /api/registrations` only |
+
+**Token Bucket Config:**
+- `max_tokens = 20`
+- `refill_rate = 5 tokens/second`
+- `cost_per_request = 1`
+
+**Response on limit exceeded:** `429 Too Many Requests` with `Retry-After: {seconds}` header.
+
+**Fallback:** If Redis is unavailable, the rate limiting middleware logs a warning and **allows** the request through (fail-open). This is acceptable because the DB-level UNIQUE constraint and FOR UPDATE lock still protect data integrity.
+
+---
+
+## 15. Cross-Cutting: RBAC Middleware
+
+### Three-Layer Authorization
+
+```
+Layer 1 (API Gateway / Nginx)  → Authentication: JWT present, signature valid, not expired
+Layer 2 (Backend Middleware)   → Authorization: role in allowedRoles
+Layer 3 (Business Logic)       → Ownership: student's resource === jwt.sub
+```
+
+The backend **always re-verifies the JWT** (RS256 signature, expiry, JTI blacklist) — it does NOT trust `X-User-Role` headers from the gateway.
+
+### Permission Matrix
+
+| Endpoint | GET | POST | PUT | DELETE | Roles |
+|----------|-----|------|-----|--------|-------|
+| `/api/workshops` | student, admin, staff | admin | — | — | — |
+| `/api/workshops/:id` | student, admin, staff | — | admin | admin | — |
+| `/api/workshops/:id/pdf` | — | admin | — | — | — |
+| `/api/workshops/:id/summary` | student, admin, staff | — | — | — | — |
+| `/api/workshops/statistics` | admin | — | — | — | — |
+| `/api/registrations` | — | student | — | — | — |
+| `/api/registrations` (all) | admin | — | — | — | — |
+| `/api/my-registrations` | student | — | — | — | — |
+| `/api/registrations/:id/cancel` | — | student (own), admin | — | — | — |
+| `/api/checkin` | — | staff | — | — | — |
+| `/api/checkin/preload` | staff | — | — | — | — |
+| `/api/checkin/sync-offline` | — | staff | — | — | — |
+| `/api/auth/login` | — | public | — | — | — |
+| `/api/auth/refresh` | — | public | — | — | — |
+| `/api/auth/logout` | — | authenticated | — | — | — |
+| `/api/users/me` | student, admin, staff | — | — | — | — |
+| `/api/users` | admin | — | — | — | — |
+
+---
+
+## 16. Frontend: Web App (Next.js)
+
+### Task WEB-01 — Student Pages
+- Workshop listing page: grid/list view, filter by date/free/paid, show seats available.
+- Workshop detail page: full info + speaker + room map placeholder + AI summary section (with polling if status ≠ done) + Register button.
+- My Registrations page: list of registrations with status, QR code display for confirmed ones.
+- QR Code display: large scannable QR image generated from the `qr_code` UUID value.
+- Notification bell icon showing unread push notifications.
+
+### Task WEB-02 — Admin Pages
+- Workshop management CRUD: form to create/edit, cancel button with confirmation.
+- Workshop detail → upload PDF button → show AI summary status with polling.
+- Participants list per workshop: table with student info + check-in status.
+- Statistics dashboard: charts for registration count, attendance rate, revenue.
+
+### Task WEB-03 — Auth Pages
+- Login page (email + password).
+- Token refresh handled transparently (interceptor retries with refresh token on 401).
+- Redirect unauthenticated users to `/login`.
+
+---
+
+## 17. Frontend: Mobile App (Flutter)
+
+### Task MOB-01 — Auth
+- Login screen with email/password.
+- Store JWT securely using `flutter_secure_storage`.
+- Auto-refresh token on expiry.
+
+### Task MOB-02 — Workshop Browser (Student)
+- Workshop list with search and filter.
+- Only display workshop detail, no registration.
+- Get notification.
+- QR code display for confirmed registrations.
+
+### Task MOB-03 — Check-in (Staff)
+- QR scanner screen using `mobile_scanner` package.
+- Preload button: downloads all QR codes for the selected workshop to SQLite.
+- Online mode: scan → API call → immediate feedback.
+- Offline mode: scan → SQLite lookup → local confirmation.
+- Sync screen: shows unsynced count, manual sync button, auto-sync on connectivity change.
+- Use `connectivity_plus` to detect network state changes.
+
+**SQLite package:** `sqflite`
+
+### Task MOB-04 — Offline Sync Logic
+- On app foreground or network reconnection: check `SELECT COUNT(*) FROM offline_checkins WHERE is_synced=0`.
+- If count > 0: call `/api/checkin/sync-offline` with batched records.
+- Update `is_synced=1` for successfully synced or duplicate records.
+- Display sync status indicator on the check-in screen.
+
+---
+
+## Environment Variables Reference
+
+```env
+# Database
+DATABASE_URL=postgresql://user:pass@localhost:5432/unihub
+
+# Redis
+REDIS_URL=redis://localhost:6379
+
+# RabbitMQ
+RABBITMQ_URL=amqp://localhost:5672
+
+# JWT
+JWT_PRIVATE_KEY=<RS256 private key PEM>
+JWT_PUBLIC_KEY=<RS256 public key PEM>
+
+# Email
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=user@example.com
+SMTP_PASS=secret
+
+# Push Notifications
+FCM_SERVER_KEY=<Firebase Cloud Messaging server key>
+
+# AI API
+AI_API_URL=https://api.openai.com/v1
+AI_API_KEY=<API key>
+AI_MODEL=gpt-4o-mini
+
+# CSV Import
+CSV_IMPORT_PATH=/data/students.csv
+
+# Sandbox Gateway
+SANDBOX_GATEWAY_URL=http://localhost:4001
+
+# File Upload
+PDF_UPLOAD_PATH=/uploads/pdf
+```
