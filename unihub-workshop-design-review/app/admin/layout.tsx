@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { getCurrentUser } from '@/lib/actions/auth'
 import { AdminSidebar } from '@/components/admin/admin-sidebar'
+import { QueryProvider } from '@/components/providers/query-provider'
 
 export default async function AdminLayout({
   children,
@@ -19,13 +20,15 @@ export default async function AdminLayout({
   }
 
   return (
-    <div className="min-h-screen">
-      <AdminSidebar user={user} />
-      <main className="pl-64">
-        <div className="p-8">
-          {children}
-        </div>
-      </main>
-    </div>
+    <QueryProvider>
+      <div className="min-h-screen">
+        <AdminSidebar user={user} />
+        <main className="pl-64">
+          <div className="p-8">
+            {children}
+          </div>
+        </main>
+      </div>
+    </QueryProvider>
   )
 }
