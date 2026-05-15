@@ -1,26 +1,38 @@
 # Đặc tả: Authentication & Authorization (Auth Module)
-
-## Mô tả
-
+ 
+## Purpose
+ 
 Module xử lý toàn bộ vòng đời xác thực (login, refresh token, logout) và
 kiểm soát truy cập theo vai trò (RBAC) cho toàn hệ thống UniHub Workshop.
-
-Hệ thống có **3 role cố định**, không hỗ trợ gán quyền động:
-
+## Requirements
+### Requirement: Role-based Access Control
+Hệ thống SHALL hỗ trợ **3 role cố định**, không hỗ trợ gán quyền động:
+ 
 | Role      | Lưu trong DB              | Mô tả                                                      |
 |-----------|---------------------------|------------------------------------------------------------|
 | `student` | `users.role = 'student'`  | Sinh viên. Chỉ thao tác trên dữ liệu của chính mình.      |
 | `admin`   | `users.role = 'admin'`    | Ban tổ chức. Toàn quyền quản lý workshop và thống kê.     |
 | `staff`   | `users.role = 'staff'`    | Nhân sự check-in. Chỉ truy cập chức năng quét QR.         |
+ 
+#### Scenario: Student access
+- **WHEN** Một student truy cập dashboard của mình.
+- **THEN** Hệ thống MUST cho phép truy cập.
 
-Sinh viên **không tự đăng ký tài khoản**. Tài khoản sinh viên được tạo
-tự động từ luồng CSV import đêm. Tài khoản `admin` và `staff` được seed
-trực tiếp qua migration script.
-
-JWT dùng thuật toán **RS256** (bất đối xứng). Auth Service giữ private key.
-API Gateway và Backend đều tự verify bằng public key — không service nào ngoài Auth Service có thể cấp token hợp lệ.
-
+### Requirement: Token Generation
+JWT Access Token SHALL sử dụng thuật toán **RS256** (bất đối xứng). Auth Service MUST giữ private key và không chia sẻ ra bên ngoài.
+ 
+#### Scenario: Token verification
+- **WHEN** Một backend service nhận được JWT.
+- **THEN** Nó SHALL sử dụng public key để verify chữ ký.
+ 
 ---
+
+### Requirement: Brute-force protection via Token Bucket
+Endpoint Login và Register SHALL được bảo vệ bởi middleware Token Bucket rate limiter.
+
+#### Scenario: Aggressive brute-force attempt
+- **WHEN** Một IP thực hiện 100 request login liên tiếp trong 10 giây.
+- **THEN** Sau request thứ 5, các request còn lại phải bị chặn ngay từ lớp middleware với mã lỗi 429.
 
 ## Luồng chính
 

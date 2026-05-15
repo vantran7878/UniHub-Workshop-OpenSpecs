@@ -3,10 +3,20 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
+import { headers } from 'next/headers'
+import { RateLimiterService } from '@/lib/redis/RateLimiterService'
 
 export async function signUp(formData: FormData) {
-  const supabase = await createClient()
+  const headersList = await headers()
+  const ip = headersList.get('x-forwarded-for') || 'unknown'
+  
+  const { allowed, retryAfter } = await RateLimiterService.checkLimit(`auth:signup:${ip}`, 5, 0.00001) // 5 requests per 5.5 mins roughly
+  if (!allowed) {
+    return { error: `Quá nhiều yêu cầu. Vui lòng thử lại sau ${Math.ceil(retryAfter / 1000)} giây.` }
+  }
 
+  const supabase = await createClient()
+// ... (rest of the function)
   const email = formData.get('email') as string
   const password = formData.get('password') as string
   const fullName = formData.get('full_name') as string
@@ -15,6 +25,7 @@ export async function signUp(formData: FormData) {
   const faculty = formData.get('faculty') as string
 
   const { error } = await supabase.auth.signUp({
+// ...
     email,
     password,
     options: {
@@ -38,6 +49,14 @@ export async function signUp(formData: FormData) {
 }
 
 export async function signIn(formData: FormData) {
+  const headersList = await headers()
+  const ip = headersList.get('x-forwarded-for') || 'unknown'
+  
+  const { allowed, retryAfter } = await RateLimiterService.checkLimit(`auth:signin:${ip}`, 5, 0.00001)
+  if (!allowed) {
+    return { error: `Quá nhiều yêu cầu. Vui lòng thử lại sau ${Math.ceil(retryAfter / 1000)} giây.` }
+  }
+
   const supabase = await createClient()
 
   const email = formData.get('email') as string

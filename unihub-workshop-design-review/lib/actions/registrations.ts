@@ -7,107 +7,120 @@ import { v4 as uuidv4 } from 'uuid'
 import { sendRegistrationConfirmationEmail } from '@/lib/email/send-email'
 import { generateAndUploadQRCode } from '@/lib/actions/qr-code'
 import { createNotification } from '@/lib/actions/notifications'
+import { DistributedLock } from '@/lib/redis/DistributedLock'
 
 export async function registerForWorkshop(workshopId: string) {
-  const supabase = await createClient()
-  
-  const { data: { user } } = await supabase.auth.getUser()
-  
-  if (!user) {
-    return { error: 'Vui lòng đăng nhập để đăng ký workshop' }
+  const resource = `workshop:${workshopId}:registration`
+  const lockToken = await DistributedLock.acquire(resource, 5000)
+
+  if (!lockToken) {
+    return { error: 'Hệ thống đang bận xử lý đăng ký cho workshop này. Vui lòng thử lại sau giây lát.' }
   }
 
-  // Check if already registered
-  const { data: existingReg } = await supabase
-    .from('registrations')
-    .select('id, status')
-    .eq('user_id', user.id)
-    .eq('workshop_id', workshopId)
-    .single()
-
-  if (existingReg) {
-    if (existingReg.status === 'cancelled') {
-      // Check workshop info for re-registration
-      const { data: workshop } = await supabase
-        .from('workshops')
-        .select('fee, capacity, confirmed_count, is_published, start_time, registration_deadline')
-        .eq('id', workshopId)
-        .single()
-
-      if (!workshop || !workshop.is_published) {
-        return { error: 'Workshop không khả dụng' }
-      }
-
-      // Check deadline
-      const deadline = workshop.registration_deadline 
-        ? new Date(workshop.registration_deadline) 
-        : new Date(workshop.start_time)
-      if (new Date() > deadline) {
-        return { error: 'Đã hết hạn đăng ký' }
-      }
-
-      // Check capacity
-      if (workshop.confirmed_count >= workshop.capacity) {
-        return { error: 'Workshop đã hết chỗ' }
-      }
-
-      const isFreeWorkshop = workshop.fee === 0
-      
-      // Re-activate cancelled registration
-      const { error } = await supabase
-        .from('registrations')
-        .update({ 
-          status: isFreeWorkshop ? 'confirmed' : 'pending',
-          cancelled_at: null,
-          cancel_reason: null,
-          qr_code: isFreeWorkshop ? uuidv4() : null,
-          confirmed_at: isFreeWorkshop ? new Date().toISOString() : null
-        })
-        .eq('id', existingReg.id)
-
-      if (error) {
-        return { error: error.message }
-      }
-
-      revalidatePath('/dashboard/registrations')
-      revalidatePath(`/workshops/${workshopId}`)
-      
-      if (isFreeWorkshop) {
-        return { success: true, message: 'Đăng ký lại thành công! Kiểm tra email để xem mã QR.' }
-      }
-      return { success: true, message: 'Đăng ký lại thành công! Vui lòng thanh toán để xác nhận.' }
+  try {
+    const supabase = await createClient()
+// ...
+    const { data: { user } } = await supabase.auth.getUser()
+// ...
+    if (!user) {
+      return { error: 'Vui lòng đăng nhập để đăng ký workshop' }
     }
-    return { error: 'Bạn đã đăng ký workshop này rồi' }
-  }
 
-  // Check workshop capacity using SELECT FOR UPDATE pattern
-  const { data: workshop, error: workshopError } = await supabase
-    .from('workshops')
-    .select('capacity, confirmed_count, fee, registration_deadline, start_time, is_published')
-    .eq('id', workshopId)
-    .single()
+    // Check if already registered
+// ...
+    const { data: existingReg } = await supabase
+// ...
+      .from('registrations')
+      .select('id, status')
+      .eq('user_id', user.id)
+      .eq('workshop_id', workshopId)
+      .single()
 
-  if (workshopError || !workshop) {
-    return { error: 'Workshop không tồn tại' }
-  }
+    if (existingReg) {
+// ...
+      if (existingReg.status === 'cancelled') {
+        // Check workshop info for re-registration
+        const { data: workshop } = await supabase
+          .from('workshops')
+          .select('fee, capacity, confirmed_count, is_published, start_time, registration_deadline')
+          .eq('id', workshopId)
+          .single()
 
-  if (!workshop.is_published) {
-    return { error: 'Workshop chưa được công bố' }
-  }
+        if (!workshop || !workshop.is_published) {
+          return { error: 'Workshop không khả dụng' }
+        }
 
-  // Check registration deadline
-  const deadline = workshop.registration_deadline 
-    ? new Date(workshop.registration_deadline) 
-    : new Date(workshop.start_time)
-  
-  if (new Date() > deadline) {
-    return { error: 'Đã hết hạn đăng ký' }
-  }
+        // Check deadline
+        const deadline = workshop.registration_deadline 
+          ? new Date(workshop.registration_deadline) 
+          : new Date(workshop.start_time)
+        if (new Date() > deadline) {
+          return { error: 'Đã hết hạn đăng ký' }
+        }
 
-  // Check capacity
-  if (workshop.confirmed_count >= workshop.capacity) {
-    return { error: 'Workshop đã hết chỗ' }
-  }
+        // Check capacity
+        if (workshop.confirmed_count >= workshop.capacity) {
+          return { error: 'Workshop đã hết chỗ' }
+        }
+
+        const isFreeWorkshop = workshop.fee === 0
+        
+        // Re-activate cancelled registration
+        const { error } = await supabase
+          .from('registrations')
+          .update({ 
+            status: isFreeWorkshop ? 'confirmed' : 'pending',
+            cancelled_at: null,
+            cancel_reason: null,
+            qr_code: isFreeWorkshop ? uuidv4() : null,
+            confirmed_at: isFreeWorkshop ? new Date().toISOString() : null
+          })
+          .eq('id', existingReg.id)
+
+        if (error) {
+          return { error: error.message }
+        }
+
+        revalidatePath('/dashboard/registrations')
+        revalidatePath(`/workshops/${workshopId}`)
+        
+        if (isFreeWorkshop) {
+          return { success: true, message: 'Đăng ký lại thành công! Kiểm tra email để xem mã QR.' }
+        }
+        return { success: true, message: 'Đăng ký lại thành công! Vui lòng thanh toán để xác nhận.' }
+      }
+      return { error: 'Bạn đã đăng ký workshop này rồi' }
+    }
+
+    // Check workshop capacity
+    const { data: workshop, error: workshopError } = await supabase
+      .from('workshops')
+      .select('capacity, confirmed_count, fee, registration_deadline, start_time, is_published')
+      .eq('id', workshopId)
+      .single()
+
+    if (workshopError || !workshop) {
+      return { error: 'Workshop không tồn tại' }
+    }
+
+    if (!workshop.is_published) {
+      return { error: 'Workshop chưa được công bố' }
+    }
+
+    // Check registration deadline
+    const deadline = workshop.registration_deadline 
+      ? new Date(workshop.registration_deadline) 
+      : new Date(workshop.start_time)
+    
+    if (new Date() > deadline) {
+      return { error: 'Đã hết hạn đăng ký' }
+    }
+
+    // Check capacity
+    if (workshop.confirmed_count >= workshop.capacity) {
+      return { error: 'Workshop đã hết chỗ' }
+    }
+// ...
 
   // Create registration
   const isFreeWorkshop = workshop.fee === 0
@@ -199,6 +212,8 @@ export async function registerForWorkshop(workshopId: string) {
     }
 
     return { success: true, message: 'Dang ky thanh cong! Kiem tra email de xem ma QR check-in.' }
+  } finally {
+    await DistributedLock.release(resource, lockToken)
   }
   
   return { 

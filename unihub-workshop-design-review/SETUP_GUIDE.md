@@ -13,7 +13,7 @@
 
 ```bash
 # Chuyển đến thư mục project
-cd unihub-workshop-system
+cd unihub-workshop-design-review
 
 # Cài đặt dependencies (dùng pnpm - nhanh hơn npm)
 pnpm install

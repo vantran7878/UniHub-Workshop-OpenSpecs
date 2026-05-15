@@ -1,19 +1,31 @@
 # Đặc tả: Đặt chỗ Workshop — Booking (Sinh viên xem & đăng ký)
-
-## Mô tả
-
+ 
+## Purpose
+ 
 Tính năng này cho phép sinh viên xem danh sách workshop, xem chi tiết từng workshop và thực hiện đăng ký (có phí hoặc miễn phí). Đây là module **Booking** — ranh giới nghiệp vụ bao gồm toàn bộ hành trình từ khi sinh viên nhìn thấy workshop đến khi nhận được mã QR xác nhận.
+## Requirements
+### Requirement: Seat Reservation Atomicity
+Hệ thống SHALL đảm bảo tính nhất quán của số lượng chỗ ngồi. Chỉ đúng số lượng người tương ứng với `capacity` được phép xác nhận đăng ký, ngay cả khi có tranh chấp cao.
+ 
+#### Scenario: Overselling prevention
+- **WHEN** Số lượng `confirmed` bằng `capacity`.
+- **THEN** Hệ thống SHALL từ chối đăng ký mới.
 
-Luồng đăng ký là **đồng bộ**: Booking Module gọi Payment Module trực tiếp qua internal function call và chờ kết quả trước khi trả về cho sinh viên. Chỉ notification sau khi xác nhận mới đi qua RabbitMQ bất đồng bộ.
-
-Bốn thách thức chính:
-
-- **Tranh chấp chỗ ngồi:** Nhiều sinh viên đăng ký vào chỗ cuối cùng cùng lúc — chỉ đúng một người được xác nhận.
-- **Tải trọng đột biến:** Hàng nghìn sinh viên cùng mở đăng ký khi workshop hot vừa mở — hệ thống không được sập hoặc oversell.
-- **Idempotency thanh toán:** Sinh viên bấm "Đăng ký" nhiều lần hoặc mạng lỗi retry — không được trừ tiền hai lần.
-- **Tính nhất quán trạng thái:** Workshop hết hạn đăng ký, bị hủy, hoặc đã đủ người — sinh viên phải thấy trạng thái chính xác, không phải dữ liệu cũ từ cache.
-
+### Requirement: Payment Idempotency
+Mọi giao dịch thanh toán MUST được kiểm tra tính idempotency (trùng lặp) để tránh trừ tiền sinh viên nhiều lần cho cùng một workshop.
+ 
+#### Scenario: Double charge prevention
+- **WHEN** Sinh viên bấm nút đăng ký hai lần nhanh chóng.
+- **THEN** Hệ thống MUST chỉ thực hiện thanh toán một lần.
+ 
 ---
+
+### Requirement: High-Conflict Seat Reservation Protection
+Luồng đăng ký workshop (miễn phí và có phí) SHALL sử dụng Redis Distributed Lock để bảo vệ resource `workshop:{id}:capacity`.
+
+#### Scenario: Simultaneous registration for a popular workshop
+- **WHEN** 10,000 sinh viên cùng đăng ký một workshop ngay khi vừa mở cổng.
+- **THEN** Hệ thống sử dụng Redis Lock để xếp hàng các request, đảm bảo tổng số bản ghi `confirmed` không bao giờ vượt quá `capacity`.
 
 ## Luồng chính
 
