@@ -1,5 +1,5 @@
 import { BaseWorker } from '../BaseWorker';
-import { sendRegistrationConfirmationEmail } from '@/lib/email/send-email';
+import { sendRegistrationConfirmationEmail, sendPaymentReminderEmail } from '@/lib/email/send-email';
 
 export class EmailWorker extends BaseWorker {
   protected queueName = 'email_queue';
@@ -23,8 +23,17 @@ export class EmailWorker extends BaseWorker {
       });
     } else if (type === 'cancellation_confirmation') {
       console.log(`[EmailWorker] Sending cancellation notice to ${payload.studentEmail} for ${payload.workshopTitle}`);
-      // Ở đây sẽ gọi hàm gửi email hủy thực tế
-      // await sendCancellationEmail(payload.studentEmail, payload.workshopTitle, payload.cancelReason);
+    } else if (type === 'payment_reminder') {
+      console.log(`[EmailWorker] Sending payment reminder to ${payload.studentEmail} for ${payload.workshopTitle}`);
+      
+      const paymentUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard/registrations/${payload.registrationId}/payment`;
+      
+      await sendPaymentReminderEmail({
+        studentEmail: payload.studentEmail,
+        workshopTitle: payload.workshopTitle,
+        amount: payload.amount,
+        paymentUrl
+      });
     } else {
       console.warn(`[EmailWorker] Unknown email type: ${type}`);
     }

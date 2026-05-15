@@ -69,6 +69,7 @@ export function getStatusColor(status: string): string {
     case 'success':
       return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
     case 'pending':
+    case 'deferred_payment':
       return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300'
     case 'cancelled':
     case 'failed':
@@ -84,6 +85,7 @@ export function getStatusText(status: string): string {
     pending: 'Chờ xử lý',
     confirmed: 'Đã xác nhận',
     cancelled: 'Đã hủy',
+    deferred_payment: 'Chờ thanh toán (Hệ thống bảo trì)',
     success: 'Thành công',
     failed: 'Thất bại'
   }

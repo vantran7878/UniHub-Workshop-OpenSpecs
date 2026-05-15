@@ -27,7 +27,7 @@ export default async function RegistrationsPage() {
   const { data: registrations } = await getMyRegistrations()
 
   const confirmedRegistrations = registrations.filter(r => r.status === 'confirmed')
-  const pendingRegistrations = registrations.filter(r => r.status === 'pending')
+  const pendingRegistrations = registrations.filter(r => r.status === 'pending' || r.status === 'deferred_payment')
   const cancelledRegistrations = registrations.filter(r => r.status === 'cancelled')
 
   return (
@@ -184,7 +184,7 @@ function RegistrationCard({
               </Button>
             )}
 
-            {showPayment && registration.status === 'pending' && (
+            {(registration.status === 'pending' || registration.status === 'deferred_payment') && !isPast && (
               <Button size="sm" asChild>
                 <Link href={`/dashboard/registrations/${registration.id}/payment`}>
                   <CreditCard className="mr-2 h-4 w-4" />

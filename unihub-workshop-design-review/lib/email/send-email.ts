@@ -147,3 +147,44 @@ export async function sendRegistrationConfirmationEmail(
     return { success: false, error: String(error) };
   }
 }
+export interface SendPaymentReminderEmailProps {
+  studentEmail: string;
+  workshopTitle: string;
+  amount: number;
+  paymentUrl: string;
+}
+
+export async function sendPaymentReminderEmail(props: SendPaymentReminderEmailProps) {
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) return { success: true, skipped: true };
+  const transporter = createTransporter();
+  if (!transporter) return { success: true, skipped: true };
+
+  try {
+    const senderEmail = process.env.EMAIL_USER || 'noreply@unihub.edu.vn';
+    const emailHtml = `
+      <div style="font-family: sans-serif; padding: 20px;">
+        <h2>Nhắc nhở thanh toán Workshop</h2>
+        <p>Chào bạn,</p>
+        <p>Hệ thống ghi nhận bạn đã đăng ký workshop <strong>${props.workshopTitle}</strong> thành công.</p>
+        <p>Do hệ thống thanh toán gặp sự cố tạm thời, yêu cầu của bạn đã được ghi nhận ở trạng thái chờ.</p>
+        <p>Vui lòng hoàn tất thanh toán số tiền <strong>${new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(props.amount)}</strong> để xác nhận chỗ ngồi.</p>
+        <div style="margin: 30px 0;">
+          <a href="${props.paymentUrl}" style="background: #0ea5e9; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;">Thanh toán ngay</a>
+        </div>
+        <p>Cảm ơn bạn!</p>
+      </div>
+    `;
+
+    await transporter.sendMail({
+      from: senderEmail,
+      to: props.studentEmail,
+      subject: `Nhắc nhở thanh toán: ${props.workshopTitle}`,
+      html: emailHtml,
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('[Email Reminder Error]', error);
+    return { success: false, error: String(error) };
+  }
+}

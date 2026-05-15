@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "workers": "tsx scripts/start-workers.ts",
+    "test:circuit": "tsx scripts/test-circuit-breaker.ts",
     "lint": "eslint ."
   },
   "dependencies": {
@@ -58,6 +59,7 @@
     "next": "16.2.6",
     "next-themes": "^0.4.6",
     "nodemailer": "^8.0.7",
+    "opossum": "^9.0.0",
     "pdf-parse": "^2.4.5",
     "pdfjs-dist": "^5.7.284",
     "qrcode": "^1.5.4",
@@ -80,6 +82,7 @@
     "@types/amqplib": "^0.10.8",
     "@types/node": "^22",
     "@types/nodemailer": "^8.0.0",
+    "@types/opossum": "^8.1.9",
     "@types/qrcode": "^1.5.6",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",

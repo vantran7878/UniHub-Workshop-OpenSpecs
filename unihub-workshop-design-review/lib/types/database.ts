@@ -1,7 +1,7 @@
 // Database types for UniHub Workshop System
 
 export type UserRole = 'student' | 'staff' | 'admin'
-export type RegistrationStatus = 'pending' | 'confirmed' | 'cancelled'
+export type RegistrationStatus = 'pending' | 'confirmed' | 'cancelled' | 'deferred_payment'
 export type PaymentStatus = 'pending' | 'success' | 'failed'
 export type CheckinMethod = 'qr_scan' | 'manual'
 export type NotificationType = 'registration_confirmed' | 'payment_reminder' | 'workshop_reminder' | 'workshop_cancelled' | 'workshop_updated'

@@ -3,6 +3,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { v4 as uuidv4 } from 'uuid'
+import { PaymentCircuitBreaker } from '@/lib/payments/PaymentCircuitBreaker'
+import RabbitMQProvider from '@/lib/rabbitmq/RabbitMQProvider'
 
 export async function processPayment(
   registrationId: string,
@@ -17,7 +19,7 @@ export async function processPayment(
     return { error: 'Chưa đăng nhập' }
   }
 
-  // Check idempotency - if payment with this key exists, return existing result
+  // Check idempotency
   const { data: existingPayment } = await supabase
     .from('payments')
     .select('*')
@@ -30,10 +32,9 @@ export async function processPayment(
     } else if (existingPayment.status === 'pending') {
       return { pending: true, message: 'Thanh toán đang được xử lý' }
     }
-    // If failed, allow retry with new idempotency key
   }
 
-  // Verify registration exists and belongs to user
+  // Verify registration
   const { data: registration } = await supabase
     .from('registrations')
     .select('*, workshop:workshops(fee)')
@@ -43,14 +44,6 @@ export async function processPayment(
 
   if (!registration) {
     return { error: 'Không tìm thấy đăng ký' }
-  }
-
-  if (registration.status === 'confirmed') {
-    return { error: 'Đăng ký đã được xác nhận' }
-  }
-
-  if (registration.status === 'cancelled') {
-    return { error: 'Đăng ký đã bị hủy' }
   }
 
   // Create pending payment record
@@ -66,20 +59,16 @@ export async function processPayment(
     .single()
 
   if (paymentError) {
-    // Unique constraint violation - payment already exists
-    if (paymentError.code === '23505') {
-      return { error: 'Yêu cầu thanh toán trùng lặp' }
-    }
     return { error: paymentError.message }
   }
 
-  // Simulate payment gateway call
-  // In production, this would call actual payment gateway (VNPay, Momo, etc.)
+  // Wrap gateway call with Circuit Breaker
+  const breaker = PaymentCircuitBreaker.getBreaker(simulatePaymentGateway);
+  
   try {
-    const gatewayResult = await simulatePaymentGateway(amount)
+    const gatewayResult = await breaker.fire(amount);
 
     if (gatewayResult.success) {
-      // Update payment status
       await supabase
         .from('payments')
         .update({
@@ -90,7 +79,6 @@ export async function processPayment(
         })
         .eq('id', payment.id)
 
-      // Update registration status and generate QR code
       const qrCode = uuidv4()
       await supabase
         .from('registrations')
@@ -102,82 +90,87 @@ export async function processPayment(
         .eq('id', registrationId)
 
       revalidatePath('/dashboard/registrations')
-      return { 
-        success: true, 
-        message: 'Thanh toán thành công!',
-        qrCode 
-      }
+      return { success: true, message: 'Thanh toán thành công!', qrCode }
     } else {
-      // Update payment as failed
       await supabase
         .from('payments')
-        .update({
-          status: 'failed',
-          gateway_response: gatewayResult
-        })
+        .update({ status: 'failed', gateway_response: gatewayResult })
         .eq('id', payment.id)
 
       return { error: gatewayResult.error || 'Thanh toán thất bại' }
     }
-  } catch (error) {
-    // Payment timeout - keep as pending for reconciliation
-    // Worker will reconcile later
+  } catch (error: any) {
+    if (error.name === 'CircuitBreakerOpenException' || error.message?.includes('open')) {
+      console.warn(`[Payment] Circuit Breaker active for ${registrationId}`);
+      
+      await supabase
+        .from('registrations')
+        .update({ status: 'deferred_payment' })
+        .eq('id', registrationId);
+
+      // Push reminder job to RabbitMQ
+      try {
+        const rabbit = RabbitMQProvider.getInstance();
+        const channel = await rabbit.getChannel();
+        const message = {
+          type: 'payment_reminder',
+          payload: {
+            registrationId,
+            studentEmail: user.email,
+            amount,
+            workshopTitle: registration.workshop.title
+          }
+        };
+        await channel.assertExchange('unihub_events', 'direct', { durable: true });
+        channel.publish('unihub_events', 'email_job', Buffer.from(JSON.stringify(message)), {
+          persistent: true
+        });
+      } catch (rabbitErr) {
+        console.error('[RabbitMQ] Failed to push deferred payment reminder:', rabbitErr);
+      }
+
+      return { 
+        deferred: true, 
+        message: 'Hệ thống thanh toán đang bảo trì. Đăng ký của bạn đã được ghi nhận, vui lòng quay lại thanh toán sau.' 
+      }
+    }
+
     return { 
       pending: true, 
-      message: 'Đăng ký ghi nhận, thanh toán đang xử lý. Vui lòng kiểm tra lại sau.' 
+      message: 'Kết nối cổng thanh toán gián đoạn. Chúng tôi sẽ tự động đối soát sau.' 
     }
   }
 }
 
-// Simulate payment gateway (replace with actual gateway integration)
 async function simulatePaymentGateway(amount: number): Promise<{
   success: boolean
   transactionId?: string
   error?: string
 }> {
-  // Simulate network delay
   await new Promise(resolve => setTimeout(resolve, 1000))
-  
-  // Simulate 95% success rate
   const isSuccess = Math.random() > 0.05
-  
   if (isSuccess) {
     return {
       success: true,
-      transactionId: `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      transactionId: `TXN_${Date.now()}`
     }
   }
-  
   return {
     success: false,
-    error: 'Giao dịch bị từ chối bởi ngân hàng'
+    error: 'Giao dịch bị từ chối'
   }
 }
 
 export async function getPaymentHistory() {
   const supabase = await createClient()
-  
   const { data: { user } } = await supabase.auth.getUser()
-  
-  if (!user) {
-    return { error: 'Chưa đăng nhập', data: [] }
-  }
+  if (!user) return { error: 'Chưa đăng nhập', data: [] }
 
   const { data, error } = await supabase
     .from('payments')
-    .select(`
-      *,
-      registration:registrations(
-        *,
-        workshop:workshops(title)
-      )
-    `)
+    .select('*, registration:registrations(*, workshop:workshops(title))')
     .eq('registration.user_id', user.id)
     .order('created_at', { ascending: false })
 
-  if (error) {
-    return { error: error.message, data: [] }
-  }
-
-  return { data }
+  return { data: data || [], error: error?.message }
 }
