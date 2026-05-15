@@ -4,10 +4,10 @@ import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import type { Registration } from '@/lib/types/database'
 import { v4 as uuidv4 } from 'uuid'
-import { sendRegistrationConfirmationEmail } from '@/lib/email/send-email'
 import { generateAndUploadQRCode } from '@/lib/actions/qr-code'
 import { createNotification } from '@/lib/actions/notifications'
 import { DistributedLock } from '@/lib/redis/DistributedLock'
+import RabbitMQProvider from '@/lib/rabbitmq/RabbitMQProvider'
 
 export async function registerForWorkshop(workshopId: string) {
   const resource = `workshop:${workshopId}:registration`
@@ -179,17 +179,30 @@ export async function registerForWorkshop(workshopId: string) {
           minute: '2-digit'
         })
 
-        // Send email with QR code URL
+        // Send email with QR code URL via RabbitMQ
         if (qrResult.url) {
-          await sendRegistrationConfirmationEmail({
-            studentEmail: userData.email,
-            studentName: userData.full_name,
-            workshopTitle: workshopData.title,
-            workshopDate,
-            workshopTime,
-            roomName: workshopData.room_name || 'TBD',
-            qrCodeDataUrl: qrResult.url
-          })
+          const rabbit = RabbitMQProvider.getInstance();
+          const channel = await rabbit.getChannel();
+          
+          const message = {
+            type: 'registration_confirmation',
+            payload: {
+              studentEmail: userData.email,
+              studentName: userData.full_name,
+              workshopTitle: workshopData.title,
+              workshopDate,
+              workshopTime,
+              roomName: workshopData.room_name || 'TBD',
+              qrCodeDataUrl: qrResult.url
+            }
+          };
+
+          await channel.assertExchange('unihub_events', 'direct', { durable: true });
+          channel.publish('unihub_events', 'email_job', Buffer.from(JSON.stringify(message)), {
+            persistent: true
+          });
+
+          console.log('[Registration] Email job pushed to RabbitMQ');
         }
 
         // Create notification
@@ -274,8 +287,31 @@ export async function cancelRegistration(registrationId: string, reason?: string
       .eq('id', registration.workshop_id)
       .single()
 
-    if (workshopData) {
-      await createNotification({
+      if (workshopData) {
+        // Push cancellation email job to RabbitMQ
+        try {
+          const rabbit = RabbitMQProvider.getInstance();
+          const channel = await rabbit.getChannel();
+          
+          const message = {
+            type: 'cancellation_confirmation',
+            payload: {
+              studentEmail: user.email,
+              workshopTitle: workshopData.title,
+              cancelReason: reason || 'Hủy bởi người dùng'
+            }
+          };
+
+          await channel.assertExchange('unihub_events', 'direct', { durable: true });
+          channel.publish('unihub_events', 'email_job', Buffer.from(JSON.stringify(message)), {
+            persistent: true
+          });
+          console.log('[Cancellation] Email job pushed to RabbitMQ');
+        } catch (rabbitErr) {
+          console.error('[RabbitMQ Push Error] Cancellation:', rabbitErr);
+        }
+
+        await createNotification({
         userId: user.id,
         type: 'cancellation',
         title: 'Da huy dang ky',

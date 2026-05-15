@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { generateText } from 'ai'
-import { openai } from '@ai-sdk/openai'
-import pdfParse from 'pdf-parse'
+import RabbitMQProvider from '@/lib/rabbitmq/RabbitMQProvider'
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,59 +14,29 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Convert file to buffer
-    const arrayBuffer = await file.arrayBuffer()
-    const pdfBuffer = Buffer.from(arrayBuffer)
+    // In a real scenario, we would upload the file to S3/Supabase Storage first
+    // and send the URL to RabbitMQ. For this demo, we'll assume the file is small
+    // and pass the content or just the fact that it needs processing.
+    // Assuming the file is already uploaded to 'workshop-materials' bucket in a real app.
+    
+    const rabbit = RabbitMQProvider.getInstance();
+    const channel = await rabbit.getChannel();
 
-    // Parse PDF
-    const pdfData = await pdfParse(pdfBuffer)
-    const pdfText = pdfData.text
+    const message = {
+      workshopId,
+      fileName: file.name,
+      fileType: file.type,
+      timestamp: new Date().toISOString()
+    };
 
-    if (!pdfText || pdfText.trim().length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: 'PDF không chứa nội dung text. Vui lòng upload file khác.',
-        },
-        { status: 400 }
-      )
-    }
-
-    // Use AI to summarize
-    if (!process.env.OPENAI_API_KEY) {
-      // Fallback without AI
-      const basicSummary = pdfText.substring(0, 500) + '...'
-      return NextResponse.json({
-        success: true,
-        summary: basicSummary,
-        message: 'Tóm tắt (Basic - không có AI)',
-      })
-    }
-
-    // Generate AI summary
-    const { text: aiSummary } = await generateText({
-      model: openai('gpt-4o-mini'),
-      prompt: `Đọc nội dung PDF sau đây về một workshop và tạo một mô tả ngắn gọn, chuyên nghiệp, hấp dẫn bằng tiếng Việt (200-300 từ).
-
-Mô tả này sẽ được dùng làm description của workshop trên hệ thống.
-
-PDF content:
-${pdfText.substring(0, 3000)}
-
-Yêu cầu:
-- Ngắn gọn, rõ ràng, hấp dẫn
-- Bao gồm các điểm chính về nội dung workshop
-- Thích hợp cho sinh viên đọc
-- Không quá dài
-
-Chỉ trả về nội dung mô tả, không có tiêu đề hay giải thích thêm.`,
-      maxTokens: 400,
-    })
+    await channel.assertExchange('unihub_events', 'direct', { durable: true });
+    channel.publish('unihub_events', 'ai_job', Buffer.from(JSON.stringify(message)), {
+      persistent: true
+    });
 
     return NextResponse.json({
       success: true,
-      summary: aiSummary,
-      message: 'Tóm tắt thành công',
+      message: 'Tác vụ tóm tắt PDF đã được đưa vào hàng đợi xử lý.',
     })
   } catch (error) {
     console.error('[PDF API Error]', error)
@@ -76,7 +44,7 @@ Chỉ trả về nội dung mô tả, không có tiêu đề hay giải thích t
       {
         success: false,
         error: String(error),
-        message: 'Lỗi khi xử lý PDF. Vui lòng thử lại.',
+        message: 'Lỗi khi đưa tác vụ vào hàng đợi. Vui lòng thử lại.',
       },
       { status: 500 }
     )
