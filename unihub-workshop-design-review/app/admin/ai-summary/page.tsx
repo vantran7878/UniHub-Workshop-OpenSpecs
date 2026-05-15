@@ -40,12 +40,8 @@ export default function AIWorkshopSummaryPage() {
     setSummary('')
 
     try {
-      // Read file as buffer
-      const arrayBuffer = await pdfFile.arrayBuffer()
-      const buffer = Buffer.from(arrayBuffer)
-
-      // Summarize PDF
-      const result = await summarizeWorkshopPDF(selectedWorkshopId, buffer)
+      // Call action with File directly
+      const result = await summarizeWorkshopPDF(selectedWorkshopId, pdfFile)
 
       if (result.success) {
         setSummary(result.summary || '')

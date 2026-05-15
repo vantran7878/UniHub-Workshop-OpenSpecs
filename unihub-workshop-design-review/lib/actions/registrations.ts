@@ -26,13 +26,41 @@ export async function registerForWorkshop(workshopId: string) {
 
   if (existingReg) {
     if (existingReg.status === 'cancelled') {
+      // Check workshop info for re-registration
+      const { data: workshop } = await supabase
+        .from('workshops')
+        .select('fee, capacity, confirmed_count, is_published, start_time, registration_deadline')
+        .eq('id', workshopId)
+        .single()
+
+      if (!workshop || !workshop.is_published) {
+        return { error: 'Workshop không khả dụng' }
+      }
+
+      // Check deadline
+      const deadline = workshop.registration_deadline 
+        ? new Date(workshop.registration_deadline) 
+        : new Date(workshop.start_time)
+      if (new Date() > deadline) {
+        return { error: 'Đã hết hạn đăng ký' }
+      }
+
+      // Check capacity
+      if (workshop.confirmed_count >= workshop.capacity) {
+        return { error: 'Workshop đã hết chỗ' }
+      }
+
+      const isFreeWorkshop = workshop.fee === 0
+      
       // Re-activate cancelled registration
       const { error } = await supabase
         .from('registrations')
         .update({ 
-          status: 'pending',
+          status: isFreeWorkshop ? 'confirmed' : 'pending',
           cancelled_at: null,
-          cancel_reason: null
+          cancel_reason: null,
+          qr_code: isFreeWorkshop ? uuidv4() : null,
+          confirmed_at: isFreeWorkshop ? new Date().toISOString() : null
         })
         .eq('id', existingReg.id)
 
@@ -42,7 +70,11 @@ export async function registerForWorkshop(workshopId: string) {
 
       revalidatePath('/dashboard/registrations')
       revalidatePath(`/workshops/${workshopId}`)
-      return { success: true, message: 'Đăng ký lại thành công!' }
+      
+      if (isFreeWorkshop) {
+        return { success: true, message: 'Đăng ký lại thành công! Kiểm tra email để xem mã QR.' }
+      }
+      return { success: true, message: 'Đăng ký lại thành công! Vui lòng thanh toán để xác nhận.' }
     }
     return { error: 'Bạn đã đăng ký workshop này rồi' }
   }

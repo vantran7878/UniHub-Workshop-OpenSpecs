@@ -115,8 +115,8 @@ export default function AdminCheckinPage() {
       const result = await checkInByQrCode(qrInput.trim())
 
       setCheckinResult({
-        success: result.success ?? false,
-        message: result.message ?? "",
+        success: result.success,
+        message: result.message,
         user: result.registration?.user,
       })
 
@@ -216,10 +216,11 @@ export default function AdminCheckinPage() {
 
                 {checkinResult && (
                   <div
-                    className={`mt-4 p-4 rounded-lg flex items-start gap-3 ${checkinResult.success
+                    className={`mt-4 p-4 rounded-lg flex items-start gap-3 ${
+                      checkinResult.success
                         ? "bg-green-50 border border-green-200 text-green-800"
                         : "bg-red-50 border border-red-200 text-red-800"
-                      }`}
+                    }`}
                   >
                     {checkinResult.success ? (
                       <CheckCircle className="h-6 w-6 text-green-600 shrink-0 mt-0.5" />

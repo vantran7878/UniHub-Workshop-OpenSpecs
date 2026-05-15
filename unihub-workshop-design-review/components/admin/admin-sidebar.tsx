@@ -17,9 +17,7 @@ import {
   LayoutDashboard, 
   Calendar, 
   Users, 
-  ClipboardList,
   QrCode,
-  Settings,
   LogOut,
   ChevronDown,
   FileSpreadsheet,
@@ -41,11 +39,6 @@ const navItems = [
     title: 'Workshop',
     href: '/admin/workshops',
     icon: Calendar,
-  },
-  {
-    title: 'Đăng ký',
-    href: '/admin/workshops',
-    icon: ClipboardList,
   },
   {
     title: 'Check-in',

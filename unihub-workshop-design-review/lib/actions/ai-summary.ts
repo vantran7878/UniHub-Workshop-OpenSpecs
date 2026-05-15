@@ -8,7 +8,7 @@ export async function generateAISummary(period: 'week' | 'month' | 'all' = 'mont
   try {
     const supabase = await createClient()
     const now = new Date()
-    
+
     // Calculate date range
     let startDate = new Date(0)
     if (period === 'week') {
@@ -115,7 +115,7 @@ Please provide:
 4. Recommendations for next steps
 
 Keep it brief, professional, and focused on business insights.`,
-      maxTokens: 500,
+      maxOutputTokens: 500,
     })
 
     return {

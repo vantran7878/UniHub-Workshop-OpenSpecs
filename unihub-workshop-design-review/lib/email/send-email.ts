@@ -52,6 +52,12 @@ const createTransporter = () => {
 export async function sendRegistrationConfirmationEmail(
   props: SendRegistrationEmailProps
 ) {
+  console.log('[Email Debug] Starting email send...');
+  console.log('[Email Debug] EMAIL_PROVIDER:', process.env.EMAIL_PROVIDER);
+  console.log('[Email Debug] EMAIL_USER:', process.env.EMAIL_USER ? 'SET' : 'NOT SET');
+  console.log('[Email Debug] EMAIL_PASSWORD:', process.env.EMAIL_PASSWORD ? 'SET' : 'NOT SET');
+  console.log('[Email Debug] To:', props.studentEmail);
+
   // Check if email is configured
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
     console.log('[Email Skipped] EMAIL_USER or EMAIL_PASSWORD not configured');
@@ -65,6 +71,11 @@ export async function sendRegistrationConfirmationEmail(
   }
 
   try {
+    // Verify transporter connection
+    console.log('[Email Debug] Verifying transporter...');
+    await transporter.verify();
+    console.log('[Email Debug] Transporter verified successfully');
+
     const senderEmail = process.env.EMAIL_USER || 'noreply@unihub.edu.vn';
     const emailHtml = `
       <!DOCTYPE html>
