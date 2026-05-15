@@ -7,7 +7,7 @@ export interface SendRegistrationEmailProps {
   workshopDate: string;
   workshopTime: string;
   roomName: string;
-  qrCodeDataUrl: string;
+  qrCodeDataUrl: string; // Now expects a public URL instead of base64
 }
 
 // Create transporter - supports multiple email providers

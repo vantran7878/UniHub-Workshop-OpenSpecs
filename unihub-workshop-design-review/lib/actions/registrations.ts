@@ -5,7 +5,8 @@ import { revalidatePath } from 'next/cache'
 import type { Registration } from '@/lib/types/database'
 import { v4 as uuidv4 } from 'uuid'
 import { sendRegistrationConfirmationEmail } from '@/lib/email/send-email'
-import QRCode from 'qrcode'
+import { generateAndUploadQRCode } from '@/lib/actions/qr-code'
+import { createNotification } from '@/lib/actions/notifications'
 
 export async function registerForWorkshop(workshopId: string) {
   const supabase = await createClient()
@@ -150,13 +151,9 @@ export async function registerForWorkshop(workshopId: string) {
         .single()
 
       if (userData && workshopData && registration.qr_code) {
-        const qrCodeDataUrl = await QRCode.toDataURL(registration.qr_code, {
-          errorCorrectionLevel: 'H',
-          type: 'image/png',
-          width: 300,
-          margin: 1,
-        })
-
+        // Generate and upload QR code to Supabase Storage
+        const qrResult = await generateAndUploadQRCode(registration.id, registration.qr_code)
+        
         const startTime = new Date(workshopData.start_time)
         const workshopDate = startTime.toLocaleDateString('vi-VN', {
           weekday: 'long',
@@ -169,14 +166,31 @@ export async function registerForWorkshop(workshopId: string) {
           minute: '2-digit'
         })
 
-        await sendRegistrationConfirmationEmail({
-          studentEmail: userData.email,
-          studentName: userData.full_name,
-          workshopTitle: workshopData.title,
-          workshopDate,
-          workshopTime,
-          roomName: workshopData.room_name || 'TBD',
-          qrCodeDataUrl
+        // Send email with QR code URL
+        if (qrResult.url) {
+          await sendRegistrationConfirmationEmail({
+            studentEmail: userData.email,
+            studentName: userData.full_name,
+            workshopTitle: workshopData.title,
+            workshopDate,
+            workshopTime,
+            roomName: workshopData.room_name || 'TBD',
+            qrCodeDataUrl: qrResult.url
+          })
+        }
+
+        // Create notification
+        await createNotification({
+          userId: user.id,
+          type: 'registration',
+          title: 'Dang ky thanh cong',
+          message: `Ban da dang ky thanh cong workshop "${workshopData.title}". Ma QR check-in da duoc gui qua email.`,
+          channel: 'in_app',
+          metadata: {
+            workshop_id: workshopId,
+            registration_id: registration.id,
+            workshop_title: workshopData.title,
+          }
         })
       }
     } catch (emailError) {
@@ -235,6 +249,32 @@ export async function cancelRegistration(registrationId: string, reason?: string
 
   if (error) {
     return { error: error.message }
+  }
+
+  // Create cancellation notification
+  try {
+    const { data: workshopData } = await supabase
+      .from('workshops')
+      .select('title')
+      .eq('id', registration.workshop_id)
+      .single()
+
+    if (workshopData) {
+      await createNotification({
+        userId: user.id,
+        type: 'cancellation',
+        title: 'Da huy dang ky',
+        message: `Ban da huy dang ky workshop "${workshopData.title}".`,
+        channel: 'in_app',
+        metadata: {
+          workshop_id: registration.workshop_id,
+          registration_id: registrationId,
+          workshop_title: workshopData.title,
+        }
+      })
+    }
+  } catch (notifError) {
+    console.error('[Cancellation Notification Error]', notifError)
   }
 
   revalidatePath('/dashboard/registrations')
@@ -360,12 +400,8 @@ export async function updateRegistrationStatus(
         .single()
 
       if (userData && workshopData) {
-        const qrCodeDataUrl = await QRCode.toDataURL(finalQrCode, {
-          errorCorrectionLevel: 'H',
-          type: 'image/png',
-          width: 300,
-          margin: 1,
-        })
+        // Generate and upload QR code to Supabase Storage
+        const qrResult = await generateAndUploadQRCode(registrationId, finalQrCode)
 
         const startTime = new Date(workshopData.start_time)
         const workshopDate = startTime.toLocaleDateString('vi-VN', {
@@ -379,14 +415,31 @@ export async function updateRegistrationStatus(
           minute: '2-digit'
         })
 
-        await sendRegistrationConfirmationEmail({
-          studentEmail: userData.email,
-          studentName: userData.full_name,
-          workshopTitle: workshopData.title,
-          workshopDate,
-          workshopTime,
-          roomName: workshopData.room_name || 'TBD',
-          qrCodeDataUrl
+        // Send email with QR code URL
+        if (qrResult.url) {
+          await sendRegistrationConfirmationEmail({
+            studentEmail: userData.email,
+            studentName: userData.full_name,
+            workshopTitle: workshopData.title,
+            workshopDate,
+            workshopTime,
+            roomName: workshopData.room_name || 'TBD',
+            qrCodeDataUrl: qrResult.url
+          })
+        }
+
+        // Create notification
+        await createNotification({
+          userId: registration.user_id,
+          type: 'registration',
+          title: 'Dang ky da duoc xac nhan',
+          message: `Dang ky workshop "${workshopData.title}" da duoc xac nhan. Ma QR check-in da duoc gui qua email.`,
+          channel: 'in_app',
+          metadata: {
+            workshop_id: registration.workshop_id,
+            registration_id: registrationId,
+            workshop_title: workshopData.title,
+          }
         })
       }
     } catch (emailError) {
