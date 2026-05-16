@@ -11,7 +11,12 @@ export class EmailWorker extends BaseWorker {
 
     if (type === 'registration_confirmation') {
       console.log(`[EmailWorker] Sending confirmation email to ${payload.studentEmail}`);
-      
+
+      // Deserialize base64 buffer back to Buffer
+      const qrBuffer = payload.qrCodeBuffer
+        ? Buffer.from(payload.qrCodeBuffer, 'base64')
+        : undefined;
+
       await sendRegistrationConfirmationEmail({
         studentEmail: payload.studentEmail,
         studentName: payload.studentName,
@@ -19,20 +24,21 @@ export class EmailWorker extends BaseWorker {
         workshopDate: payload.workshopDate,
         workshopTime: payload.workshopTime,
         roomName: payload.roomName,
-        qrCodeDataUrl: payload.qrCodeDataUrl
+        qrCodeDataUrl: payload.qrCodeDataUrl,
+        qrBuffer,
       });
     } else if (type === 'cancellation_confirmation') {
       console.log(`[EmailWorker] Sending cancellation notice to ${payload.studentEmail} for ${payload.workshopTitle}`);
     } else if (type === 'payment_reminder') {
       console.log(`[EmailWorker] Sending payment reminder to ${payload.studentEmail} for ${payload.workshopTitle}`);
-      
+
       const paymentUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/dashboard/registrations/${payload.registrationId}/payment`;
-      
+
       await sendPaymentReminderEmail({
         studentEmail: payload.studentEmail,
         workshopTitle: payload.workshopTitle,
         amount: payload.amount,
-        paymentUrl
+        paymentUrl,
       });
     } else {
       console.warn(`[EmailWorker] Unknown email type: ${type}`);

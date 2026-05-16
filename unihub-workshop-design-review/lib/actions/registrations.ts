@@ -4,10 +4,11 @@ import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import type { Registration } from '@/lib/types/database'
 import { v4 as uuidv4 } from 'uuid'
-import { generateAndUploadQRCode } from '@/lib/actions/qr-code'
+import { generateAndUploadQRCode, getOrCreateQRCodeUrl, generateQRCodeBuffer } from '@/lib/actions/qr-code'
 import { createNotification } from '@/lib/actions/notifications'
 import { DistributedLock } from '@/lib/redis/DistributedLock'
 import RabbitMQProvider from '@/lib/rabbitmq/RabbitMQProvider'
+import { sendRegistrationConfirmationEmail } from '@/lib/email/send-email'
 
 export async function registerForWorkshop(workshopId: string) {
   const resource = `workshop:${workshopId}:registration`
@@ -23,6 +24,7 @@ export async function registerForWorkshop(workshopId: string) {
     if (!user) {
       return { error: 'Vui lòng đăng nhập để đăng ký workshop' }
     }
+
     const { data: existingReg } = await supabase
       .from('registrations')
       .select('id, status')
@@ -32,7 +34,6 @@ export async function registerForWorkshop(workshopId: string) {
 
     if (existingReg) {
       if (existingReg.status === 'cancelled') {
-        // Check workshop info for re-registration
         const { data: workshop } = await supabase
           .from('workshops')
           .select('fee, capacity, confirmed_count, is_published, start_time, registration_deadline')
@@ -43,7 +44,6 @@ export async function registerForWorkshop(workshopId: string) {
           return { error: 'Workshop không khả dụng' }
         }
 
-        // Check deadline
         const deadline = workshop.registration_deadline
           ? new Date(workshop.registration_deadline)
           : new Date(workshop.start_time)
@@ -51,14 +51,12 @@ export async function registerForWorkshop(workshopId: string) {
           return { error: 'Đã hết hạn đăng ký' }
         }
 
-        // Check capacity
         if (workshop.confirmed_count >= workshop.capacity) {
           return { error: 'Workshop đã hết chỗ' }
         }
 
         const isFreeWorkshop = workshop.fee === 0
 
-        // Re-activate cancelled registration
         const { error } = await supabase
           .from('registrations')
           .update({
@@ -85,7 +83,6 @@ export async function registerForWorkshop(workshopId: string) {
       return { error: 'Bạn đã đăng ký workshop này rồi' }
     }
 
-    // Check workshop capacity
     const { data: workshop, error: workshopError } = await supabase
       .from('workshops')
       .select('capacity, confirmed_count, fee, registration_deadline, start_time, is_published')
@@ -100,7 +97,6 @@ export async function registerForWorkshop(workshopId: string) {
       return { error: 'Workshop chưa được công bố' }
     }
 
-    // Check registration deadline
     const deadline = workshop.registration_deadline
       ? new Date(workshop.registration_deadline)
       : new Date(workshop.start_time)
@@ -109,13 +105,10 @@ export async function registerForWorkshop(workshopId: string) {
       return { error: 'Đã hết hạn đăng ký' }
     }
 
-    // Check capacity
     if (workshop.confirmed_count >= workshop.capacity) {
       return { error: 'Workshop đã hết chỗ' }
     }
-    // ...
 
-    // Create registration
     const isFreeWorkshop = workshop.fee === 0
 
     const { data: registration, error: regError } = await supabase
@@ -131,7 +124,6 @@ export async function registerForWorkshop(workshopId: string) {
       .single()
 
     if (regError) {
-      // Handle unique constraint violation (race condition)
       if (regError.code === '23505') {
         return { error: 'Bạn đã đăng ký workshop này rồi' }
       }
@@ -142,7 +134,6 @@ export async function registerForWorkshop(workshopId: string) {
     revalidatePath(`/workshops/${workshopId}`)
 
     if (isFreeWorkshop) {
-      // Send confirmation email with QR code
       try {
         const { data: userData } = await supabase
           .from('users')
@@ -157,8 +148,10 @@ export async function registerForWorkshop(workshopId: string) {
           .single()
 
         if (userData && workshopData && registration.qr_code) {
-          // Generate and upload QR code to Supabase Storage
-          const qrResult = await generateAndUploadQRCode(registration.id, registration.qr_code)
+          const qrCodeUrl = await getOrCreateQRCodeUrl(registration.id, registration.qr_code)
+
+          // Generate QR buffer for inline email attachment
+          const qrBuffer = await generateQRCodeBuffer(registration.qr_code)
 
           const startTime = new Date(workshopData.start_time)
           const workshopDate = startTime.toLocaleDateString('vi-VN', {
@@ -172,33 +165,30 @@ export async function registerForWorkshop(workshopId: string) {
             minute: '2-digit'
           })
 
-          // Send email with QR code URL via RabbitMQ
-          if (qrResult.url) {
-            const rabbit = RabbitMQProvider.getInstance();
-            const channel = await rabbit.getChannel();
+          const rabbit = RabbitMQProvider.getInstance();
+          const channel = await rabbit.getChannel();
 
-            const message = {
-              type: 'registration_confirmation',
-              payload: {
-                studentEmail: userData.email,
-                studentName: userData.full_name,
-                workshopTitle: workshopData.title,
-                workshopDate,
-                workshopTime,
-                roomName: workshopData.room_name || 'TBD',
-                qrCodeDataUrl: qrResult.url
-              }
-            };
+          const message = {
+            type: 'registration_confirmation',
+            payload: {
+              studentEmail: userData.email,
+              studentName: userData.full_name,
+              workshopTitle: workshopData.title,
+              workshopDate,
+              workshopTime,
+              roomName: workshopData.room_name || 'TBD',
+              qrCodeDataUrl: qrCodeUrl,
+              qrCodeBuffer: qrBuffer.toString('base64'), // serialize for RabbitMQ
+            }
+          };
 
-            await channel.assertExchange('unihub_events', 'direct', { durable: true });
-            channel.publish('unihub_events', 'email_job', Buffer.from(JSON.stringify(message)), {
-              persistent: true
-            });
+          await channel.assertExchange('unihub_events', 'direct', { durable: true });
+          channel.publish('unihub_events', 'email_job', Buffer.from(JSON.stringify(message)), {
+            persistent: true
+          });
 
-            console.log('[Registration] Email job pushed to RabbitMQ');
-          }
+          console.log('[Registration] Email job pushed to RabbitMQ');
 
-          // Create notification
           await createNotification({
             userId: user.id,
             type: 'registration',
@@ -214,11 +204,11 @@ export async function registerForWorkshop(workshopId: string) {
         }
       } catch (emailError) {
         console.error('[Registration Email Error]', emailError)
-        // Don't fail registration if email fails
       }
 
       return { success: true, message: 'Dang ky thanh cong! Kiem tra email de xem ma QR check-in.' }
     }
+
     return {
       success: true,
       message: 'Đăng ký thành công! Vui lòng thanh toán để xác nhận.',
@@ -240,7 +230,6 @@ export async function cancelRegistration(registrationId: string, reason?: string
     return { error: 'Chưa đăng nhập' }
   }
 
-  // Check ownership
   const { data: registration } = await supabase
     .from('registrations')
     .select('user_id, workshop_id, status')
@@ -272,7 +261,6 @@ export async function cancelRegistration(registrationId: string, reason?: string
     return { error: error.message }
   }
 
-  // Create cancellation notification
   try {
     const { data: workshopData } = await supabase
       .from('workshops')
@@ -281,7 +269,6 @@ export async function cancelRegistration(registrationId: string, reason?: string
       .single()
 
     if (workshopData) {
-      // Push cancellation email job to RabbitMQ
       try {
         const rabbit = RabbitMQProvider.getInstance();
         const channel = await rabbit.getChannel();
@@ -390,7 +377,6 @@ export async function getWorkshopRegistrations(workshopId: string) {
   return { data }
 }
 
-// Admin/Staff: Update registration status
 export async function updateRegistrationStatus(
   registrationId: string,
   status: 'pending' | 'confirmed' | 'cancelled',
@@ -398,7 +384,6 @@ export async function updateRegistrationStatus(
 ) {
   const supabase = await createClient()
 
-  // Fetch registration data for email
   const { data: registration } = await supabase
     .from('registrations')
     .select('user_id, workshop_id, qr_code')
@@ -428,7 +413,6 @@ export async function updateRegistrationStatus(
     return { error: error.message }
   }
 
-  // Send email when confirmed
   if (status === 'confirmed') {
     try {
       const { data: userData } = await supabase
@@ -444,8 +428,10 @@ export async function updateRegistrationStatus(
         .single()
 
       if (userData && workshopData) {
-        // Generate and upload QR code to Supabase Storage
-        const qrResult = await generateAndUploadQRCode(registrationId, finalQrCode)
+        const qrCodeUrl = await getOrCreateQRCodeUrl(registrationId, finalQrCode)
+
+        // Generate QR buffer for inline email attachment
+        const qrBuffer = await generateQRCodeBuffer(finalQrCode)
 
         const startTime = new Date(workshopData.start_time)
         const workshopDate = startTime.toLocaleDateString('vi-VN', {
@@ -459,8 +445,7 @@ export async function updateRegistrationStatus(
           minute: '2-digit'
         })
 
-        // Send email with QR code URL
-        if (qrResult.url) {
+        if (qrCodeUrl) {
           await sendRegistrationConfirmationEmail({
             studentEmail: userData.email,
             studentName: userData.full_name,
@@ -468,11 +453,11 @@ export async function updateRegistrationStatus(
             workshopDate,
             workshopTime,
             roomName: workshopData.room_name || 'TBD',
-            qrCodeDataUrl: qrResult.url
+            qrCodeDataUrl: qrCodeUrl,
+            qrBuffer,
           })
         }
 
-        // Create notification
         await createNotification({
           userId: registration.user_id,
           type: 'registration',

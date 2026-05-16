@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 
 export type NotificationType = 'registration' | 'reminder' | 'checkin' | 'cancellation' | 'system'
-export type NotificationChannel = 'in_app' | 'email' | 'push'
+export type NotificationChannel = 'app' | 'email' | 'push'
 
 interface CreateNotificationParams {
   userId: string
@@ -25,7 +25,7 @@ export async function createNotification(params: CreateNotificationParams) {
       type: params.type,
       title: params.title,
       message: params.message,
-      channel: params.channel || 'in_app',
+      channel: params.channel || 'app',
       is_read: false,
       metadata: params.metadata || {},
       sent_at: new Date().toISOString(),

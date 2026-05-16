@@ -88,3 +88,16 @@ export async function getOrCreateQRCodeUrl(
   const result = await generateAndUploadQRCode(registrationId, qrCodeData)
   return result.url || null
 }
+
+/**
+ * Generate QR code as a PNG Buffer
+ * Useful for inline email attachments (CID)
+ */
+export async function generateQRCodeBuffer(qrCodeData: string): Promise<Buffer> {
+  return await QRCode.toBuffer(qrCodeData, {
+    errorCorrectionLevel: 'H',
+    type: 'png',
+    width: 400,
+    margin: 2,
+  })
+}

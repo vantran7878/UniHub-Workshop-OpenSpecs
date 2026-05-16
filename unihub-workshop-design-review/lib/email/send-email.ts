@@ -7,34 +7,35 @@ export interface SendRegistrationEmailProps {
   workshopDate: string;
   workshopTime: string;
   roomName: string;
-  qrCodeDataUrl: string; // Now expects a public URL instead of base64
+  qrCodeDataUrl: string;
+  qrBuffer?: Buffer; // inline CID attachment
 }
 
 // Create transporter - supports multiple email providers
 const createTransporter = () => {
   const emailProvider = process.env.EMAIL_PROVIDER || 'gmail';
-  
+  console.log('[Email Transporter] Provider:', emailProvider);
+  console.log('[Email Transporter] User:', process.env.EMAIL_USER);
+
   if (emailProvider === 'gmail') {
     return nodemailer.createTransport({
       service: 'gmail',
       auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD, // Gmail App Password, not regular password
+        pass: process.env.EMAIL_PASSWORD,
       },
     });
   } else if (emailProvider === 'smtp') {
-    // Generic SMTP
     return nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: parseInt(process.env.SMTP_PORT || '587'),
-      secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
+      secure: process.env.SMTP_SECURE === 'true',
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASSWORD,
       },
     });
   } else if (emailProvider === 'ethereal') {
-    // For testing only
     return nodemailer.createTransport({
       host: 'smtp.ethereal.email',
       port: 587,
@@ -57,8 +58,8 @@ export async function sendRegistrationConfirmationEmail(
   console.log('[Email Debug] EMAIL_USER:', process.env.EMAIL_USER ? 'SET' : 'NOT SET');
   console.log('[Email Debug] EMAIL_PASSWORD:', process.env.EMAIL_PASSWORD ? 'SET' : 'NOT SET');
   console.log('[Email Debug] To:', props.studentEmail);
+  console.log('[Email Debug] QR Buffer:', props.qrBuffer ? `${props.qrBuffer.length} bytes` : 'NOT PROVIDED');
 
-  // Check if email is configured
   if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
     console.log('[Email Skipped] EMAIL_USER or EMAIL_PASSWORD not configured');
     return { success: true, skipped: true };
@@ -71,12 +72,17 @@ export async function sendRegistrationConfirmationEmail(
   }
 
   try {
-    // Verify transporter connection
     console.log('[Email Debug] Verifying transporter...');
     await transporter.verify();
     console.log('[Email Debug] Transporter verified successfully');
 
     const senderEmail = process.env.EMAIL_USER || 'noreply@unihub.edu.vn';
+
+    // Dùng CID nếu có buffer, fallback sang URL nếu không
+    const qrImgSrc = props.qrBuffer
+      ? `data:image/png;base64,${props.qrBuffer.toString('base64')}`
+      : props.qrCodeDataUrl;
+
     const emailHtml = `
       <!DOCTYPE html>
       <html>
@@ -90,12 +96,12 @@ export async function sendRegistrationConfirmationEmail(
           <h1 style="color: white; margin: 0; font-size: 24px;">UniHub Workshop</h1>
           <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">Xac nhan dang ky thanh cong</p>
         </div>
-        
+
         <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
           <p style="font-size: 16px;">Xin chao <strong>${props.studentName}</strong>,</p>
-          
+
           <p>Ban da dang ky thanh cong workshop:</p>
-          
+
           <div style="background: #f8fafc; border-radius: 8px; padding: 20px; margin: 20px 0;">
             <h2 style="color: #0ea5e9; margin: 0 0 15px 0; font-size: 20px;">${props.workshopTitle}</h2>
             <table style="width: 100%; border-collapse: collapse;">
@@ -113,17 +119,17 @@ export async function sendRegistrationConfirmationEmail(
               </tr>
             </table>
           </div>
-          
+
           <div style="text-align: center; margin: 30px 0;">
             <p style="color: #64748b; margin-bottom: 15px;">Ma QR check-in cua ban:</p>
             <div style="background: white; display: inline-block; padding: 15px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-              <img src="${props.qrCodeDataUrl}" alt="QR Code" style="width: 200px; height: 200px; display: block;" />
+              <img src="${qrImgSrc}" alt="QR Code" style="width: 200px; height: 200px; display: block;" />
             </div>
             <p style="color: #94a3b8; font-size: 14px; margin-top: 15px;">Vui long xuat trinh ma QR nay khi check-in</p>
           </div>
-          
+
           <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;" />
-          
+
           <p style="color: #64748b; font-size: 14px; text-align: center;">
             Neu ban co bat ky cau hoi nao, vui long lien he voi chung toi.<br/>
             <strong>UniHub Workshop System</strong>
@@ -141,12 +147,15 @@ export async function sendRegistrationConfirmationEmail(
     });
 
     console.log('[Email Sent]', result.messageId);
+    transporter.close();
     return { success: true, messageId: result.messageId };
   } catch (error) {
     console.error('[Email Error]', error);
+    if (transporter) transporter.close();
     return { success: false, error: String(error) };
   }
 }
+
 export interface SendPaymentReminderEmailProps {
   studentEmail: string;
   workshopTitle: string;
@@ -182,9 +191,11 @@ export async function sendPaymentReminderEmail(props: SendPaymentReminderEmailPr
       html: emailHtml,
     });
 
+    transporter.close();
     return { success: true };
   } catch (error) {
     console.error('[Email Reminder Error]', error);
+    if (transporter) transporter.close();
     return { success: false, error: String(error) };
   }
 }

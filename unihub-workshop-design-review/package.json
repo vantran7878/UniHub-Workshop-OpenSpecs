@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "workers": "tsx scripts/start-workers.ts",
+    "workers": "tsx --env-file=.env.local scripts/start-workers.ts",
     "test:circuit": "tsx scripts/test-circuit-breaker.ts",
     "lint": "eslint ."
   },
