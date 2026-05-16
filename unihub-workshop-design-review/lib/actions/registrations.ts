@@ -499,3 +499,53 @@ export async function updateRegistrationStatus(
   revalidatePath('/admin/workshops')
   return { success: true }
 }
+
+export async function getAllRegistrations({
+  page = 1,
+  limit = 10,
+  search = '',
+  status = '',
+}: {
+  page?: number
+  limit?: number
+  search?: string
+  status?: string
+}) {
+  const supabase = await createClient()
+
+  let query = supabase
+    .from('registrations')
+    .select(`
+      *,
+      user:users(full_name, email, student_id),
+      workshop:workshops(title)
+    `, { count: 'exact' })
+
+  if (status && status !== 'all') {
+    query = query.eq('status', status)
+  }
+
+  if (search) {
+    query = query.or(`full_name.ilike.%${search}%,email.ilike.%${search}%`, { foreignTable: 'users' })
+  }
+
+  const from = (page - 1) * limit
+  const to = from + limit - 1
+
+  const { data, error, count } = await query
+    .order('created_at', { ascending: false })
+    .range(from, to)
+
+  if (error) {
+    console.error('[getAllRegistrations] Error:', error)
+    return { error: error.message, data: [], total: 0 }
+  }
+
+  return {
+    data: data as (Registration & { user: any; workshop: any })[],
+    total: count || 0,
+    page,
+    limit,
+    totalPages: Math.ceil((count || 0) / limit)
+  }
+}

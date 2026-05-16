@@ -186,8 +186,8 @@ export default async function AdminDashboardPage() {
                 {stats.recentWorkshops.map((workshop: any) => (
                   <div key={workshop.id} className="flex items-center gap-4">
                     <div className="flex-1 space-y-1">
-                      <Link 
-                        href={`/admin/workshops/${workshop.id}`}
+                      <Link
+                        href={`/workshops/${workshop.id}`}
                         className="font-medium hover:text-primary transition-colors line-clamp-1"
                       >
                         {workshop.title}
@@ -196,9 +196,8 @@ export default async function AdminDashboardPage() {
                         {workshop.confirmed_count}/{workshop.capacity} đăng ký
                       </p>
                     </div>
-                    <div className={`h-2 w-2 rounded-full ${
-                      workshop.is_published ? 'bg-green-500' : 'bg-yellow-500'
-                    }`} />
+                    <div className={`h-2 w-2 rounded-full ${workshop.is_published ? 'bg-green-500' : 'bg-yellow-500'
+                      }`} />
                   </div>
                 ))}
               </div>
@@ -239,15 +238,14 @@ export default async function AdminDashboardPage() {
                         {reg.workshop?.title}
                       </p>
                     </div>
-                    <span className={`text-xs px-2 py-1 rounded-full ${
-                      reg.status === 'confirmed' 
-                        ? 'bg-green-100 text-green-800' 
-                        : reg.status === 'pending'
+                    <span className={`text-xs px-2 py-1 rounded-full ${reg.status === 'confirmed'
+                      ? 'bg-green-100 text-green-800'
+                      : reg.status === 'pending'
                         ? 'bg-yellow-100 text-yellow-800'
                         : 'bg-red-100 text-red-800'
-                    }`}>
-                      {reg.status === 'confirmed' ? 'Xác nhận' : 
-                       reg.status === 'pending' ? 'Chờ' : 'Hủy'}
+                      }`}>
+                      {reg.status === 'confirmed' ? 'Xác nhận' :
+                        reg.status === 'pending' ? 'Chờ' : 'Hủy'}
                     </span>
                   </div>
                 ))}
@@ -266,11 +264,6 @@ export default async function AdminDashboardPage() {
           <Button asChild>
             <Link href="/admin/workshops/new">
               Tạo Workshop mới
-            </Link>
-          </Button>
-          <Button variant="outline" asChild>
-            <Link href="/admin/checkins">
-              Quản lý Check-in
             </Link>
           </Button>
           <Button variant="outline" asChild>

@@ -12,12 +12,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { 
-  GraduationCap, 
-  LayoutDashboard, 
-  Calendar, 
-  Users, 
-  QrCode,
+import {
+  GraduationCap,
+  LayoutDashboard,
+  Calendar,
+  Users,
+  Home,
   LogOut,
   ChevronDown,
   FileSpreadsheet,
@@ -39,11 +39,6 @@ const navItems = [
     title: 'Workshop',
     href: '/admin/workshops',
     icon: Calendar,
-  },
-  {
-    title: 'Check-in',
-    href: '/admin/checkin',
-    icon: QrCode,
   },
   {
     title: 'Người dùng',
@@ -86,9 +81,9 @@ export function AdminSidebar({ user }: AdminSidebarProps) {
         {/* Navigation */}
         <nav className="flex-1 space-y-1 p-4">
           {navItems.map((item) => {
-            const isActive = pathname === item.href || 
+            const isActive = pathname === item.href ||
               (item.href !== '/admin' && pathname.startsWith(item.href))
-            
+
             return (
               <Link
                 key={item.href}
@@ -106,6 +101,16 @@ export function AdminSidebar({ user }: AdminSidebarProps) {
             )
           })}
         </nav>
+
+        <div className="p-4 space-y-1">
+          <Link
+            href="/"
+            className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <Home className="h-5 w-5" />
+            Về trang chủ
+          </Link>
+        </div>
 
         {/* User Menu */}
         <div className="border-t p-4">

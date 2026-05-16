@@ -27,7 +27,7 @@ export default async function DashboardPage() {
     redirect('/admin')
   }
   if (user.role === 'staff') {
-    redirect('/staff')
+    redirect('/')
   }
 
   const { data: registrations } = await getMyRegistrations()

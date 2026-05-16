@@ -40,7 +40,7 @@ export function Header({ user }: HeaderProps) {
   const getDashboardLink = () => {
     if (!user) return '/auth/login'
     if (user.role === 'admin') return '/admin'
-    if (user.role === 'staff') return '/staff'
+    if (user.role === 'staff') return '/'
     return '/dashboard'
   }
 
