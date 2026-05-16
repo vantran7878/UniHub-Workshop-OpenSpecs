@@ -5,13 +5,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { importStudents } from '@/lib/actions/import-students'
-import { Loader2, Upload, CheckCircle, AlertCircle, Download } from 'lucide-react'
+import { uploadExternalSyncCSV, triggerSync } from '@/lib/actions/sync-students'
+import { Loader2, Upload, CheckCircle, AlertCircle, Download, RefreshCw } from 'lucide-react'
 
 export default function ImportStudentsPage() {
   const [loading, setLoading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [result, setResult] = useState<any>(null)
   const [error, setError] = useState<string>('')
+  const [successMessage, setSuccessMessage] = useState<string>('')
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -19,16 +21,19 @@ export default function ImportStudentsPage() {
 
     setLoading(true)
     setError('')
+    setSuccessMessage('')
     setResult(null)
 
     try {
-      const text = await file.text()
-      const res = await importStudents(text)
+      const formData = new FormData()
+      formData.append('file', file)
 
-      if ('error' in res) {
-        setError(res.error)
+      const res = await uploadExternalSyncCSV(formData)
+
+      if (!res.success) {
+        setError(res.error || 'Lỗi không xác định')
       } else {
-        setResult(res)
+        setSuccessMessage(`File "${file.name}" đã được tải lên thành công. Hệ thống đang xử lý đồng bộ trong nền...`)
       }
     } catch (err) {
       setError(`Lỗi: ${String(err).slice(0, 100)}`)
@@ -37,12 +42,29 @@ export default function ImportStudentsPage() {
     }
   }
 
+  const handleManualSync = async () => {
+    setSyncing(true)
+    setError('')
+    try {
+      const res = await triggerSync()
+      if (res.success) {
+        setSuccessMessage('Đã gửi yêu cầu đồng bộ. Vui lòng kiểm tra lại sau vài phút.')
+      } else {
+        setError('Không thể kích hoạt đồng bộ.')
+      }
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   const downloadTemplate = () => {
-    const template = `email,full_name
-student1@example.com,Nguyễn Văn A
-student2@example.com,Trần Thị B
-student3@example.com,Phạm Minh C
-student4@example.com,Hoàng Thị D`
+    const template = `email,full_name,student_id,phone,faculty,role
+student1@example.com,Nguyễn Văn A,11223344,0123456789,CNTT,student
+student2@example.com,Trần Thị B, 22334455, 0987654321, AT, student
+student3@example.com,Phạm Minh C, 33445566, 0123456789, AT, student
+student4@example.com,Hoàng Thị D, 44556677, 0987654321, CNTT, student`
 
     const blob = new Blob([template], { type: 'text/csv' })
     const url = window.URL.createObjectURL(blob)
@@ -83,7 +105,7 @@ student4@example.com,Hoàng Thị D`
         <CardHeader>
           <CardTitle>Upload file CSV</CardTitle>
           <CardDescription>
-            File phải có cột: email, full_name
+            File phải có cột: email, full_name, student_id, faculty...
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -91,10 +113,10 @@ student4@example.com,Hoàng Thị D`
             <label className="flex flex-col items-center justify-center cursor-pointer">
               <Upload className="h-8 w-8 text-muted-foreground mb-2" />
               <span className="text-sm font-medium">
-                {loading ? 'Đang xử lý...' : 'Chọn file CSV'}
+                {loading ? 'Đang tải lên...' : 'Chọn file CSV để đồng bộ'}
               </span>
               <span className="text-xs text-muted-foreground mt-1">
-                hoặc kéo thả file vào đây
+                File sẽ được đưa vào hàng đợi xử lý tự động
               </span>
               <Input
                 type="file"
@@ -106,10 +128,28 @@ student4@example.com,Hoàng Thị D`
             </label>
           </div>
 
+          <div className="flex items-center justify-between pt-4 border-t">
+            <div className="text-sm text-muted-foreground">
+              Hoặc kích hoạt kiểm tra đồng bộ ngay lập tức
+            </div>
+            <Button
+              variant="secondary"
+              onClick={handleManualSync}
+              disabled={syncing || loading}
+            >
+              {syncing ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              Đồng bộ ngay
+            </Button>
+          </div>
+
           {loading && (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
-              <span className="ml-2">Đang nhập sinh viên...</span>
+              <span className="ml-2">Đang tải file lên storage...</span>
             </div>
           )}
         </CardContent>
@@ -123,43 +163,14 @@ student4@example.com,Hoàng Thị D`
         </Alert>
       )}
 
-      {/* Success Result */}
-      {result && (
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5 text-green-600" />
-              <CardTitle>Nhập thành công</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <div className="text-sm text-muted-foreground">Tổng cộng</div>
-                <div className="text-2xl font-bold">{result.totalCount}</div>
-              </div>
-              <div>
-                <div className="text-sm text-muted-foreground">Thành công</div>
-                <div className="text-2xl font-bold text-green-600">{result.successCount}</div>
-              </div>
-              <div>
-                <div className="text-sm text-muted-foreground">Lỗi</div>
-                <div className="text-2xl font-bold text-red-600">{result.errorCount}</div>
-              </div>
-            </div>
-
-            {result.errors && result.errors.length > 0 && (
-              <div>
-                <div className="text-sm font-medium mb-2">Chi tiết lỗi:</div>
-                <div className="bg-muted p-3 rounded text-sm space-y-1">
-                  {result.errors.map((err: string, i: number) => (
-                    <div key={i} className="text-muted-foreground">{err}</div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      {/* Success Alert */}
+      {successMessage && (
+        <Alert className="border-green-500 bg-green-50 dark:bg-green-950">
+          <CheckCircle className="h-4 w-4 text-green-600" />
+          <AlertDescription className="text-green-800 dark:text-green-200">
+            {successMessage}
+          </AlertDescription>
+        </Alert>
       )}
 
       {/* Instructions */}

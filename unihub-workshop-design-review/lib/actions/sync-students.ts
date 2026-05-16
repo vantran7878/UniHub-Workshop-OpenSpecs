@@ -133,6 +133,76 @@ export async function checkAndSyncExternalCSVs() {
   }
 }
 
+import RabbitMQProvider from '@/lib/rabbitmq/RabbitMQProvider';
+
+/**
+ * Uploads a CSV file to the 'external-sync' bucket and triggers a sync job.
+ */
+export async function uploadExternalSyncCSV(formData: FormData) {
+  try {
+    const file = formData.get('file') as File;
+    if (!file) return { success: false, error: 'Không có file nào được chọn' };
+
+    // 1. Ensure bucket exists
+    const { data: buckets } = await supabaseServiceRole.storage.listBuckets();
+    const bucketExists = buckets?.some(b => b.name === 'external-sync');
+    if (!bucketExists) {
+      await supabaseServiceRole.storage.createBucket('external-sync', { public: false });
+    }
+
+    const fileName = `${Date.now()}-${file.name}`;
+    
+    // 2. Upload to bucket
+    const { error: uploadError } = await supabaseServiceRole
+      .storage
+      .from('external-sync')
+      .upload(fileName, file);
+
+    if (uploadError) throw uploadError;
+
+    // 2. Trigger RabbitMQ worker
+    const syncRes = await triggerSync();
+    
+    return { 
+      success: true, 
+      fileName, 
+      workerTriggered: syncRes.success 
+    };
+  } catch (error) {
+    console.error('[Upload Sync Error]', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : String(error) 
+    };
+  }
+}
+
+/**
+ * Sends a message to RabbitMQ to trigger the SyncWorker.
+ */
+export async function triggerSync() {
+  try {
+    const channel = await RabbitMQProvider.getInstance().getChannel();
+    const exchange = 'unihub_events';
+    const routingKey = 'sync_job';
+    
+    await channel.assertExchange(exchange, 'topic', { durable: true });
+    
+    const message = {
+      type: 'auto_sync_check',
+      requestedAt: new Date().toISOString()
+    };
+    
+    channel.publish(exchange, routingKey, Buffer.from(JSON.stringify(message)));
+    console.log('[RabbitMQ] Sent sync request:', message);
+    
+    return { success: true };
+  } catch (error) {
+    console.error('[RabbitMQ Error] Failed to send sync request:', error);
+    return { success: false, error: String(error) };
+  }
+}
+
 /**
  * Manual sync from exports bucket.
  */
