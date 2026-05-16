@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:unihub_mobile/models/models.dart';
+import 'package:unihub_mobile/services/api_service.dart';
+import 'package:unihub_mobile/services/auth_service.dart';
 
 class WorkshopDetailPage extends StatefulWidget {
   final String workshopId;
@@ -130,8 +133,21 @@ class _WorkshopDetailPageState extends State<WorkshopDetailPage> {
       );
     }
 
-    final date = DateTime.parse(_workshop!['start_time']);
-    final endDate = DateTime.parse(_workshop!['end_time']);
+    final startTimeStr = _workshop!['start_time'] as String?;
+    final endTimeStr = _workshop!['end_time'] as String?;
+    
+    if (startTimeStr == null || startTimeStr.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(),
+        body: const Center(child: Text('Dữ liệu workshop không hợp lệ (thiếu thời gian)')),
+      );
+    }
+
+    final date = DateTime.parse(startTimeStr);
+    final endDate = endTimeStr != null && endTimeStr.isNotEmpty 
+        ? DateTime.parse(endTimeStr) 
+        : date.add(const Duration(hours: 2));
+    
     final spotsLeft = (_workshop!['capacity'] ?? 0) - (_workshop!['confirmed_count'] ?? 0);
     final fee = _workshop!['fee'] ?? 0;
 

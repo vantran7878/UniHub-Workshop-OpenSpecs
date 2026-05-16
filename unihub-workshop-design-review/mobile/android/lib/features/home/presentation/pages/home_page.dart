@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:unihub_mobile/services/api_service.dart';
+import 'package:unihub_mobile/models/models.dart';
 
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
@@ -24,55 +26,51 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   Future<void> _loadData() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
 
     final currentUser = Supabase.instance.client.auth.currentUser;
-    if (currentUser == null) return;
+    if (currentUser == null) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
 
     try {
-      // Load user data
-      final userData = await Supabase.instance.client
-          .from('users')
-          .select()
-          .eq('id', currentUser.id)
-          .single();
-
-      // Load upcoming workshops
-      final workshops = await Supabase.instance.client
-          .from('workshops')
-          .select()
-          .eq('is_published', true)
-          .gte('start_time', DateTime.now().toIso8601String())
-          .order('start_time')
-          .limit(5);
-
-      // Load my registrations
-      final registrations = await Supabase.instance.client
-          .from('registrations')
-          .select('*, workshop:workshops(*)')
-          .eq('user_id', currentUser.id)
-          .eq('status', 'confirmed')
-          .order('registered_at', ascending: false)
-          .limit(3);
+      final apiService = ApiService();
+      
+      // Load data in parallel with explicit types for Future.wait
+      final results = await Future.wait<dynamic>([
+        apiService.getUserProfile(currentUser.id),
+        apiService.getUpcomingWorkshops(),
+        apiService.getUpcomingRegistrations(),
+      ]);
 
       if (mounted) {
         setState(() {
-          _user = userData;
-          _upcomingWorkshops = List<Map<String, dynamic>>.from(workshops);
-          _myRegistrations = List<Map<String, dynamic>>.from(registrations);
+          _user = results[0] as Map<String, dynamic>?;
+          _upcomingWorkshops = (results[1] as List<Workshop>).map((w) => w.toJson()).toList();
+          _myRegistrations = results[2] as List<Map<String, dynamic>>;
           _isLoading = false;
         });
       }
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Không thể tải dữ liệu: $e')),
+        );
       }
     }
   }
 
-  String _formatDate(String dateStr) {
-    final date = DateTime.parse(dateStr);
-    return DateFormat('dd/MM/yyyy HH:mm', 'vi_VN').format(date);
+  String _formatDate(String? dateStr) {
+    if (dateStr == null || dateStr.isEmpty) return 'TBD';
+    try {
+      final date = DateTime.parse(dateStr);
+      return DateFormat('dd/MM/yyyy HH:mm', 'vi_VN').format(date);
+    } catch (e) {
+      return 'Lỗi ngày';
+    }
   }
 
   @override
@@ -231,7 +229,10 @@ class _HomePageState extends ConsumerState<HomePage> {
                         separatorBuilder: (_, __) => const SizedBox(height: 8),
                         itemBuilder: (context, index) {
                           final reg = _myRegistrations[index];
-                          final workshop = reg['workshop'];
+                          final workshopData = reg['workshops'];
+                          final workshop = (workshopData is List && workshopData.isNotEmpty) 
+                              ? workshopData.first 
+                              : workshopData;
                           return Card(
                             child: ListTile(
                               leading: Container(
@@ -307,7 +308,12 @@ class _WorkshopCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final date = DateTime.parse(workshop['start_time']);
+    final startTimeStr = workshop['start_time'] as String?;
+    if (startTimeStr == null || startTimeStr.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    
+    final date = DateTime.parse(startTimeStr);
     final spotsLeft = (workshop['capacity'] ?? 0) - (workshop['confirmed_count'] ?? 0);
 
     return Card(

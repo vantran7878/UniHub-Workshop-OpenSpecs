@@ -38,23 +38,29 @@ class _RegistrationsPageState extends State<RegistrationsPage> with SingleTicker
     try {
       final registrations = await Supabase.instance.client
           .from('registrations')
-          .select('*, workshop:workshops(*)')
+          .select('*, workshops(*)')
           .eq('user_id', user.id)
-          .neq('status', 'cancelled')
-          .order('registered_at', ascending: false);
+          .order('created_at', ascending: false);
 
       final now = DateTime.now();
       final upcoming = <Map<String, dynamic>>[];
       final past = <Map<String, dynamic>>[];
 
       for (final reg in registrations) {
-        final workshop = reg['workshop'];
+        final workshopData = reg['workshops'];
+        final workshop = (workshopData is List && workshopData.isNotEmpty) 
+            ? workshopData.first 
+            : (workshopData is Map ? workshopData : null);
+        
         if (workshop != null) {
-          final startTime = DateTime.parse(workshop['start_time']);
-          if (startTime.isAfter(now)) {
-            upcoming.add(reg);
-          } else {
-            past.add(reg);
+          final startTimeStr = workshop['start_time'] as String?;
+          if (startTimeStr != null) {
+            final startTime = DateTime.parse(startTimeStr);
+            if (startTime.isAfter(now)) {
+              upcoming.add(reg);
+            } else {
+              past.add(reg);
+            }
           }
         }
       }
@@ -67,6 +73,7 @@ class _RegistrationsPageState extends State<RegistrationsPage> with SingleTicker
         });
       }
     } catch (e) {
+      print('Error loading registrations: $e');
       if (mounted) {
         setState(() => _isLoading = false);
       }
@@ -189,7 +196,11 @@ class _RegistrationCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final workshop = registration['workshop'];
+    final workshopData = registration['workshops'];
+    final workshop = (workshopData is List && workshopData.isNotEmpty) 
+        ? workshopData.first 
+        : workshopData;
+    
     final status = registration['status'] ?? 'pending';
     final date = DateTime.parse(workshop['start_time']);
 

@@ -1,10 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
-import '../../../services/api_service.dart';
-import '../../../services/offline_service.dart';
-import '../../../models/models.dart';
+import 'package:unihub_mobile/services/api_service.dart';
+import 'package:unihub_mobile/services/offline_service.dart';
+import 'package:unihub_mobile/models/models.dart';
 
 class CheckinPage extends StatefulWidget {
   const CheckinPage({super.key});
@@ -29,6 +30,7 @@ class _CheckinPageState extends State<CheckinPage> {
   int _pendingSyncCount = 0;
   bool _isOnline = true;
   MobileScannerController? _scannerController;
+  StreamSubscription<bool>? _connectivitySubscription;
 
   @override
   void initState() {
@@ -42,6 +44,7 @@ class _CheckinPageState extends State<CheckinPage> {
   @override
   void dispose() {
     _scannerController?.dispose();
+    _connectivitySubscription?.cancel();
     offlineService.close();
     super.dispose();
   }
@@ -52,10 +55,12 @@ class _CheckinPageState extends State<CheckinPage> {
   }
 
   void _listenToConnectivity() {
-    offlineService.connectivityStream().listen((isOnline) {
-      setState(() => _isOnline = isOnline);
-      if (isOnline) {
-        _syncOfflineCheckins();
+    _connectivitySubscription = offlineService.connectivityStream().listen((isOnline) {
+      if (mounted) {
+        setState(() => _isOnline = isOnline);
+        if (isOnline) {
+          _syncOfflineCheckins();
+        }
       }
     });
   }
@@ -98,9 +103,17 @@ class _CheckinPageState extends State<CheckinPage> {
 
   Future<void> _loadCheckinCount() async {
     if (_selectedWorkshopId == null) return;
-
+ 
     try {
-      final count = await apiService.getCheckinCountForWorkshop(_selectedWorkshopId!);
+      // Get unsynced count from local DB
+      final unsynced = await offlineService.getUnsyncedCheckins();
+      final localCount = unsynced.where((c) => c.workshopId == _selectedWorkshopId).length;
+
+      final count = await apiService.getCheckinCountForWorkshop(
+        _selectedWorkshopId!,
+        localOfflineCount: localCount,
+      );
+      
       if (mounted) {
         setState(() => _checkinCount = count);
       }
@@ -149,7 +162,7 @@ class _CheckinPageState extends State<CheckinPage> {
 
   void _startScanning() {
     _scannerController = MobileScannerController(
-      detectionSpeed: DetectionSpeed.normal,
+      detectionSpeed: DetectionSpeed.noDuplicates,
       facing: CameraFacing.back,
     );
     setState(() {
@@ -209,6 +222,10 @@ class _CheckinPageState extends State<CheckinPage> {
         } catch (e) {
           print('Error checking existing checkin: $e');
         }
+      } else {
+        // Offline check in local database
+        final unsynced = await offlineService.getUnsyncedCheckins();
+        alreadyCheckedIn = unsynced.any((c) => c.registrationId == registration['id']);
       }
 
       if (alreadyCheckedIn) {
@@ -241,14 +258,16 @@ class _CheckinPageState extends State<CheckinPage> {
           _checkPendingSync();
         }
 
-        setState(() {
-          _lastResult = _isOnline
-              ? 'Check-in thành công!'
-              : 'Check-in lưu offline. Sẽ đồng bộ khi có mạng';
-          _lastSuccess = true;
-          _lastUser = registration['user'];
-          _checkinCount++;
-        });
+        if (mounted) {
+          setState(() {
+            _lastResult = _isOnline
+                ? 'Check-in thành công!'
+                : 'Check-in lưu offline. Sẽ đồng bộ khi có mạng';
+            _lastSuccess = true;
+            _lastUser = registration['user'];
+            _checkinCount++;
+          });
+        }
       } catch (e) {
         // Fallback to offline
         final userId = Supabase.instance.client.auth.currentUser?.id;
@@ -262,20 +281,39 @@ class _CheckinPageState extends State<CheckinPage> {
         );
         _checkPendingSync();
 
-        setState(() {
-          _lastResult = 'Check-in lưu offline. Sẽ đồng bộ khi có mạng';
-          _lastSuccess = true;
-          _lastUser = registration['user'];
-          _checkinCount++;
-        });
+        if (mounted) {
+          setState(() {
+            _lastResult = 'Check-in lưu offline. Sẽ đồng bộ khi có mạng';
+            _lastSuccess = true;
+            _lastUser = registration['user'];
+            _checkinCount++;
+          });
+        }
       }
     } catch (e) {
-      setState(() {
-        _lastResult = 'Lỗi: $e';
-        _lastSuccess = false;
-      });
+      if (mounted) {
+        setState(() {
+          _lastResult = 'Lỗi: $e';
+          _lastSuccess = false;
+        });
+      }
     } finally {
-      setState(() => _isProcessing = false);
+      if (mounted) {
+        setState(() => _isProcessing = false);
+      }
+
+      // Pause briefly after scan to show result, then clear it
+      if (_lastSuccess == true) {
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted && _isScanning) {
+            setState(() {
+              _lastResult = null;
+              _lastSuccess = null;
+              _lastUser = null;
+            });
+          }
+        });
+      }
     }
   }
 
@@ -326,9 +364,9 @@ class _CheckinPageState extends State<CheckinPage> {
                       hintText: 'Chọn workshop để check-in',
                       prefixIcon: Icon(Icons.event),
                     ),
-                    items: _workshops.map((workshop) {
+                    items: _workshops.map<DropdownMenuItem<String>>((workshop) {
                       final date = workshop.startTime;
-                      return DropdownMenuItem(
+                      return DropdownMenuItem<String>(
                         value: workshop.id,
                         child: Text(
                           '${workshop.title} (${DateFormat('HH:mm').format(date)})',
@@ -336,12 +374,12 @@ class _CheckinPageState extends State<CheckinPage> {
                         ),
                       );
                     }).toList(),
-                    onChanged: (value) {
+                    onChanged: (String? value) {
                       setState(() {
                         _selectedWorkshopId = value;
                         _checkinCount = 0;
                       });
-                      _loadCheckinCount();
+                      if (value != null) _loadCheckinCount();
                     },
                   ),
                 ],

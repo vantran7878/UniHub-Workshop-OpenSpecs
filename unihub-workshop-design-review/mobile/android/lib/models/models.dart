@@ -51,6 +51,8 @@ class Workshop {
   final int confirmedCount;
   final int fee;
   final bool isPublished;
+  final String? aiSummary;
+  final String? thumbnailUrl;
 
   Workshop({
     required this.id,
@@ -63,6 +65,8 @@ class Workshop {
     required this.confirmedCount,
     required this.fee,
     required this.isPublished,
+    this.aiSummary,
+    this.thumbnailUrl,
   });
 
   factory Workshop.fromJson(Map<String, dynamic> json) {
@@ -75,10 +79,12 @@ class Workshop {
         ? DateTime.parse(json['end_time'] as String)
         : null,
       roomName: json['room_name'] as String? ?? 'TBD',
-      capacity: json['capacity'] as int? ?? 0,
-      confirmedCount: json['confirmed_count'] as int? ?? 0,
-      fee: json['fee'] as int? ?? 0,
+      capacity: (json['capacity'] as num?)?.toInt() ?? 0,
+      confirmedCount: (json['confirmed_count'] as num?)?.toInt() ?? 0,
+      fee: (json['fee'] as num?)?.toInt() ?? 0,
       isPublished: json['is_published'] as bool? ?? true,
+      aiSummary: json['ai_summary'] as String?,
+      thumbnailUrl: json['thumbnail_url'] as String?,
     );
   }
 
@@ -93,6 +99,8 @@ class Workshop {
     'confirmed_count': confirmedCount,
     'fee': fee,
     'is_published': isPublished,
+    'ai_summary': aiSummary,
+    'thumbnail_url': thumbnailUrl,
   };
 }
 
@@ -159,7 +167,6 @@ class Registration {
 class Checkin {
   final String id;
   final String registrationId;
-  final String workshopId;
   final String? checkedInBy;
   final DateTime checkedInAt;
   final String? notes;
@@ -167,7 +174,6 @@ class Checkin {
   Checkin({
     required this.id,
     required this.registrationId,
-    required this.workshopId,
     this.checkedInBy,
     required this.checkedInAt,
     this.notes,
@@ -177,7 +183,6 @@ class Checkin {
     return Checkin(
       id: json['id'] as String,
       registrationId: json['registration_id'] as String,
-      workshopId: json['workshop_id'] as String,
       checkedInBy: json['checked_in_by'] as String?,
       checkedInAt: DateTime.parse(json['checked_in_at'] as String),
       notes: json['notes'] as String?,
@@ -187,7 +192,6 @@ class Checkin {
   Map<String, dynamic> toJson() => {
     'id': id,
     'registration_id': registrationId,
-    'workshop_id': workshopId,
     'checked_in_by': checkedInBy,
     'checked_in_at': checkedInAt.toIso8601String(),
     'notes': notes,
@@ -219,7 +223,7 @@ class OfflineCheckin {
       workshopId: json['workshop_id'] as String,
       checkedInBy: json['checked_in_by'] as String?,
       checkedInAt: DateTime.parse(json['checked_in_at'] as String),
-      synced: json['synced'] as bool? ?? false,
+      synced: json['synced'] == 1 || json['synced'] == true,
     );
   }
 
@@ -229,6 +233,6 @@ class OfflineCheckin {
     'workshop_id': workshopId,
     'checked_in_by': checkedInBy,
     'checked_in_at': checkedInAt.toIso8601String(),
-    'synced': synced,
+    'synced': synced ? 1 : 0,
   };
 }

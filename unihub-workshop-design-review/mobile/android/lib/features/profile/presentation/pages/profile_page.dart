@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../../services/auth_service.dart';
-import '../../../models/models.dart';
+import 'package:unihub_mobile/services/auth_service.dart';
+import 'package:unihub_mobile/models/models.dart' as models;
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -13,7 +13,7 @@ class ProfilePage extends StatefulWidget {
 
 class _ProfilePageState extends State<ProfilePage> {
   final authService = AuthService();
-  User? _user;
+  models.User? _user;
   int _registrationCount = 0;
   bool _isLoading = true;
   bool _isLogoutLoading = false;

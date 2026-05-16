@@ -49,7 +49,8 @@ class OfflineService {
         room_name TEXT,
         capacity INTEGER,
         confirmed_count INTEGER,
-        fee INTEGER DEFAULT 0
+        fee INTEGER DEFAULT 0,
+        ai_summary TEXT
       )
     ''');
   }
@@ -127,6 +128,7 @@ class OfflineService {
           'capacity': workshop.capacity,
           'confirmed_count': workshop.confirmedCount,
           'fee': workshop.fee,
+          'ai_summary': workshop.aiSummary,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
@@ -160,7 +162,9 @@ class OfflineService {
 
   // Close database
   Future<void> close() async {
-    final database = await db;
-    await database.close();
+    if (_db != null) {
+      await _db!.close();
+      _db = null;
+    }
   }
 }

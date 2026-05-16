@@ -39,30 +39,19 @@ class _MainScaffoldState extends State<MainScaffold> {
   }
 
   void _onTabTapped(int index) {
-    setState(() {
-      _currentIndex = index;
-    });
+    final routes = [
+      '/home',
+      '/workshops',
+      '/registrations',
+      if (_isStaff) '/checkin',
+      '/profile',
+    ];
 
-    switch (index) {
-      case 0:
-        context.go('/home');
-        break;
-      case 1:
-        context.go('/workshops');
-        break;
-      case 2:
-        context.go('/registrations');
-        break;
-      case 3:
-        if (_isStaff) {
-          context.go('/checkin');
-        } else {
-          context.go('/profile');
-        }
-        break;
-      case 4:
-        context.go('/profile');
-        break;
+    if (index >= 0 && index < routes.length) {
+      setState(() {
+        _currentIndex = index;
+      });
+      context.go(routes[index]);
     }
   }
 

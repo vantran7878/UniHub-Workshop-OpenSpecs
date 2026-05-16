@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:unihub_mobile/models/models.dart';
 
 class RegistrationDetailPage extends StatefulWidget {
   final String registrationId;
@@ -28,7 +29,7 @@ class _RegistrationDetailPageState extends State<RegistrationDetailPage> {
     try {
       final registration = await Supabase.instance.client
           .from('registrations')
-          .select('*, workshop:workshops(*)')
+          .select('*, workshops(*)')
           .eq('id', widget.registrationId)
           .single();
 
@@ -90,11 +91,22 @@ class _RegistrationDetailPageState extends State<RegistrationDetailPage> {
       );
     }
 
-    final workshop = _registration!['workshop'];
+    final workshopData = _registration!['workshops'];
+    final workshop = (workshopData is List && workshopData.isNotEmpty) 
+        ? workshopData.first 
+        : workshopData;
+
     final status = _registration!['status'] ?? 'pending';
     final qrCode = _registration!['qr_code'];
-    final date = DateTime.parse(workshop['start_time']);
-    final endDate = DateTime.parse(workshop['end_time']);
+    final date = workshop?['start_time'] != null 
+        ? DateTime.parse(workshop['start_time']) 
+        : DateTime.now();
+    final endDate = workshop?['end_time'] != null 
+        ? DateTime.parse(workshop['end_time']) 
+        : date.add(const Duration(hours: 2));
+
+    final createdAtStr = _registration!['created_at'] as String?;
+    final confirmedAtStr = _registration!['confirmed_at'] as String?;
 
     return Scaffold(
       appBar: AppBar(
@@ -105,7 +117,7 @@ class _RegistrationDetailPageState extends State<RegistrationDetailPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // QR Code
+            // QR Code Section
             if (qrCode != null && status == 'confirmed') ...[
               Card(
                 child: Padding(
@@ -139,6 +151,33 @@ class _RegistrationDetailPageState extends State<RegistrationDetailPage> {
                           color: Colors.grey[600],
                         ),
                         textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ] else if (status == 'pending') ...[
+              Card(
+                color: Colors.orange.shade50,
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      Icon(Icons.qr_code_2, size: 64, color: Colors.orange.shade300),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Mã QR chưa sẵn sàng',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange.shade800,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Vui lòng hoàn tất thanh toán để nhận mã QR check-in.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.orange.shade800),
                       ),
                     ],
                   ),
@@ -244,25 +283,27 @@ class _RegistrationDetailPageState extends State<RegistrationDetailPage> {
                     _InfoRow(
                       icon: Icons.confirmation_number,
                       label: 'Mã đăng ký',
-                      value: widget.registrationId.substring(0, 8).toUpperCase(),
+                      value: widget.registrationId.length >= 8 
+                          ? widget.registrationId.substring(0, 8).toUpperCase()
+                          : widget.registrationId.toUpperCase(),
                     ),
-                    if (_registration!['registered_at'] != null) ...[
+                    if (createdAtStr != null) ...[
                       const Divider(),
                       _InfoRow(
                         icon: Icons.event_available,
                         label: 'Ngày đăng ký',
                         value: DateFormat('dd/MM/yyyy HH:mm').format(
-                          DateTime.parse(_registration!['registered_at']),
+                          DateTime.parse(createdAtStr),
                         ),
                       ),
                     ],
-                    if (_registration!['confirmed_at'] != null) ...[
+                    if (confirmedAtStr != null) ...[
                       const Divider(),
                       _InfoRow(
                         icon: Icons.verified,
                         label: 'Ngày xác nhận',
                         value: DateFormat('dd/MM/yyyy HH:mm').format(
-                          DateTime.parse(_registration!['confirmed_at']),
+                          DateTime.parse(confirmedAtStr),
                         ),
                       ),
                     ],

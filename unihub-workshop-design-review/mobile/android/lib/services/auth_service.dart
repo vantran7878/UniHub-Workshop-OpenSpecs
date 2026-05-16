@@ -1,12 +1,12 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import '../models/models.dart';
+import 'package:unihub_mobile/models/models.dart' as models;
 
 class AuthService {
   final supabase = Supabase.instance.client;
   final secureStorage = const FlutterSecureStorage();
 
-  Future<User?> getCurrentUser() async {
+  Future<models.User?> getCurrentUser() async {
     try {
       final session = supabase.auth.currentSession;
       if (session == null) return null;
@@ -17,14 +17,14 @@ class AuthService {
           .eq('id', session.user.id)
           .single();
 
-      return User.fromJson(response as Map<String, dynamic>);
+      return models.User.fromJson(response as Map<String, dynamic>);
     } catch (e) {
       print('Error getting current user: $e');
       return null;
     }
   }
 
-  Future<User> login({
+  Future<models.User> login({
     required String email,
     required String password,
   }) async {
@@ -45,7 +45,7 @@ class AuthService {
           .eq('id', response.user!.id)
           .single();
 
-      return User.fromJson(userData as Map<String, dynamic>);
+      return models.User.fromJson(userData as Map<String, dynamic>);
     } catch (e) {
       rethrow;
     }

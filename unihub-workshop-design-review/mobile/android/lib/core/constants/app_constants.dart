@@ -1,7 +1,7 @@
 class AppConstants {
   // Supabase Configuration
   static const String supabaseUrl = 'https://ogltevujqghnlgepbpgd.supabase.co';
-  static const String supabaseAnonKey = 'your_anon_key_here';
+  static const String supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nbHRldnVqcWdobmxnZXBicGdkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NzcwOTQsImV4cCI6MjA5NDI1MzA5NH0.j57N29nAJShmUM9o6EKranFWmtd5BLXIocNhNGBrOc8';
   static const String supabaseProjectId = 'ogltevujqghnlgepbpgd';
 
   // App Information
