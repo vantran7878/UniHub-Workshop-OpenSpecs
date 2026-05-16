@@ -89,6 +89,60 @@ export async function processPayment(
         })
         .eq('id', registrationId)
 
+      // Push confirmation email with QR code to RabbitMQ
+      try {
+        const { getOrCreateQRCodeUrl } = await import('@/lib/actions/qr-code')
+        const { generateQRCodeBuffer } = await import('@/lib/utils/qr-buffer')
+
+        const qrCodeUrl = await getOrCreateQRCodeUrl(registrationId, qrCode)
+        const qrBuffer = await generateQRCodeBuffer(qrCode)
+
+        const { data: userData } = await supabase
+          .from('users')
+          .select('full_name, email')
+          .eq('id', user.id)
+          .single()
+
+        const { data: workshopData } = await supabase
+          .from('workshops')
+          .select('title, start_time, room_name')
+          .eq('id', registration.workshop_id)
+          .single()
+
+        if (userData && workshopData) {
+          const startTime = new Date(workshopData.start_time)
+          const workshopDate = startTime.toLocaleDateString('vi-VN', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+          })
+          const workshopTime = startTime.toLocaleTimeString('vi-VN', {
+            hour: '2-digit', minute: '2-digit'
+          })
+
+          const rabbit = RabbitMQProvider.getInstance()
+          const channel = await rabbit.getChannel()
+          const message = {
+            type: 'registration_confirmation',
+            payload: {
+              studentEmail: userData.email,
+              studentName: userData.full_name,
+              workshopTitle: workshopData.title,
+              workshopDate,
+              workshopTime,
+              roomName: workshopData.room_name || 'TBD',
+              qrCodeDataUrl: qrCodeUrl,
+              qrCodeBuffer: qrBuffer.toString('base64'),
+            }
+          }
+          await channel.assertExchange('unihub_events', 'direct', { durable: true })
+          channel.publish('unihub_events', 'email_job', Buffer.from(JSON.stringify(message)), {
+            persistent: true
+          })
+          console.log('[Payment] ✅ Email job pushed to RabbitMQ for', userData.email)
+        }
+      } catch (emailErr) {
+        console.error('[Payment] ❌ Failed to push confirmation email:', emailErr)
+      }
+
       revalidatePath('/dashboard/registrations')
       return { success: true, message: 'Thanh toán thành công!', qrCode }
     } else {

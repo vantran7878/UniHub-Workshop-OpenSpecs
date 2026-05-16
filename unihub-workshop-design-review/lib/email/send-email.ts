@@ -8,7 +8,8 @@ export interface SendRegistrationEmailProps {
   workshopTime: string;
   roomName: string;
   qrCodeDataUrl: string;
-  qrBuffer?: Buffer; // inline CID attachment
+  qrCode?: string;    // The raw QR data (UUID)
+  qrBuffer?: Buffer;  // inline CID attachment
 }
 
 // Create transporter - supports multiple email providers
@@ -24,6 +25,9 @@ const createTransporter = () => {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASSWORD,
       },
+      connectionTimeout: 20000, // 20 seconds timeout
+      greetingTimeout: 20000,
+      socketTimeout: 20000,
     });
   } else if (emailProvider === 'smtp') {
     return nodemailer.createTransport({
@@ -78,10 +82,8 @@ export async function sendRegistrationConfirmationEmail(
 
     const senderEmail = process.env.EMAIL_USER || 'noreply@unihub.edu.vn';
 
-    // Dùng CID nếu có buffer, fallback sang URL nếu không
-    const qrImgSrc = props.qrBuffer
-      ? `data:image/png;base64,${props.qrBuffer.toString('base64')}`
-      : props.qrCodeDataUrl;
+    const qrCid = 'qr-code@unihub.edu.vn';
+    const qrImgSrc = props.qrBuffer ? `cid:${qrCid}` : props.qrCodeDataUrl;
 
     const emailHtml = `
       <!DOCTYPE html>
@@ -89,50 +91,53 @@ export async function sendRegistrationConfirmationEmail(
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Xac nhan dang ky workshop</title>
+        <title>Xác nhận đăng ký Workshop</title>
       </head>
-      <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
         <div style="background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%); padding: 30px; border-radius: 12px 12px 0 0; text-align: center;">
           <h1 style="color: white; margin: 0; font-size: 24px;">UniHub Workshop</h1>
-          <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">Xac nhan dang ky thanh cong</p>
+          <p style="color: rgba(255,255,255,0.9); margin: 10px 0 0 0;">Xác nhận đăng ký thành công</p>
         </div>
 
-        <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px;">
-          <p style="font-size: 16px;">Xin chao <strong>${props.studentName}</strong>,</p>
+        <div style="background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 12px 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+          <p style="font-size: 16px;">Chào <strong>${props.studentName}</strong>,</p>
 
-          <p>Ban da dang ky thanh cong workshop:</p>
+          <p>Bạn đã đăng ký thành công workshop:</p>
 
-          <div style="background: #f8fafc; border-radius: 8px; padding: 20px; margin: 20px 0;">
+          <div style="background: #f8fafc; border-radius: 8px; padding: 20px; margin: 20px 0; border: 1px solid #f1f5f9;">
             <h2 style="color: #0ea5e9; margin: 0 0 15px 0; font-size: 20px;">${props.workshopTitle}</h2>
             <table style="width: 100%; border-collapse: collapse;">
               <tr>
-                <td style="padding: 8px 0; color: #64748b; width: 100px;">Ngay:</td>
-                <td style="padding: 8px 0; font-weight: 500;">${props.workshopDate}</td>
+                <td style="padding: 8px 0; color: #64748b; width: 100px;">Ngày:</td>
+                <td style="padding: 8px 0; font-weight: 600;">${props.workshopDate}</td>
               </tr>
               <tr>
-                <td style="padding: 8px 0; color: #64748b;">Gio:</td>
-                <td style="padding: 8px 0; font-weight: 500;">${props.workshopTime}</td>
+                <td style="padding: 8px 0; color: #64748b;">Giờ:</td>
+                <td style="padding: 8px 0; font-weight: 600;">${props.workshopTime}</td>
               </tr>
               <tr>
-                <td style="padding: 8px 0; color: #64748b;">Phong:</td>
-                <td style="padding: 8px 0; font-weight: 500;">${props.roomName}</td>
+                <td style="padding: 8px 0; color: #64748b;">Phòng:</td>
+                <td style="padding: 8px 0; font-weight: 600;">${props.roomName}</td>
               </tr>
             </table>
           </div>
 
           <div style="text-align: center; margin: 30px 0;">
-            <p style="color: #64748b; margin-bottom: 15px;">Ma QR check-in cua ban:</p>
-            <div style="background: white; display: inline-block; padding: 15px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
-              <img src="${qrImgSrc}" alt="QR Code" style="width: 200px; height: 200px; display: block;" />
+            <p style="color: #64748b; margin-bottom: 15px; font-weight: 500;">Mã QR check-in của bạn:</p>
+            <div style="background: white; display: inline-block; padding: 15px; border-radius: 12px; border: 1px solid #e5e7eb;">
+              <img src="${qrImgSrc}" alt="QR Code" width="200" height="200" style="display: block;" />
             </div>
-            <p style="color: #94a3b8; font-size: 14px; margin-top: 15px;">Vui long xuat trinh ma QR nay khi check-in</p>
+            <p style="color: #94a3b8; font-size: 13px; margin-top: 15px;">
+              Vui lòng xuất trình mã QR này khi check-in.<br/>
+              <a href="${props.qrCodeDataUrl}" target="_blank" style="color: #0ea5e9; text-decoration: none;">Bấm vào đây để xem ảnh gốc</a>
+            </p>
           </div>
 
           <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;" />
 
-          <p style="color: #64748b; font-size: 14px; text-align: center;">
-            Neu ban co bat ky cau hoi nao, vui long lien he voi chung toi.<br/>
-            <strong>UniHub Workshop System</strong>
+          <p style="color: #64748b; font-size: 13px; text-align: center;">
+            Đây là email tự động từ hệ thống UniHub Workshop.<br/>
+            Cảm ơn bạn đã đồng hành cùng chúng tôi!
           </p>
         </div>
       </body>
@@ -142,8 +147,18 @@ export async function sendRegistrationConfirmationEmail(
     const result = await transporter.sendMail({
       from: senderEmail,
       to: props.studentEmail,
-      subject: `Xac nhan dang ky: ${props.workshopTitle}`,
+      subject: `Xác nhận đăng ký: ${props.workshopTitle}`,
       html: emailHtml,
+      attachments: props.qrBuffer
+        ? [
+          {
+            filename: 'qrcode.png',
+            content: props.qrBuffer,
+            cid: qrCid,
+            contentDisposition: 'inline',
+          },
+        ]
+        : [],
     });
 
     console.log('[Email Sent]', result.messageId);

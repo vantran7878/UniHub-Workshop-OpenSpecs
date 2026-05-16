@@ -4,17 +4,20 @@ import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import type { Registration } from '@/lib/types/database'
 import { v4 as uuidv4 } from 'uuid'
-import { generateAndUploadQRCode, getOrCreateQRCodeUrl, generateQRCodeBuffer } from '@/lib/actions/qr-code'
+import { generateAndUploadQRCode, getOrCreateQRCodeUrl } from '@/lib/actions/qr-code'
 import { createNotification } from '@/lib/actions/notifications'
 import { DistributedLock } from '@/lib/redis/DistributedLock'
 import RabbitMQProvider from '@/lib/rabbitmq/RabbitMQProvider'
 import { sendRegistrationConfirmationEmail } from '@/lib/email/send-email'
+import { generateQRCodeBuffer } from '@/lib/utils/qr-buffer'
 
 export async function registerForWorkshop(workshopId: string) {
+  console.log('[registerForWorkshop] ====== CALLED with workshopId:', workshopId)
   const resource = `workshop:${workshopId}:registration`
   const lockToken = await DistributedLock.acquire(resource, 5000)
 
   if (!lockToken) {
+    console.log('[registerForWorkshop] ❌ EARLY RETURN: lock failed')
     return { error: 'Hệ thống đang bận xử lý đăng ký cho workshop này. Vui lòng thử lại sau giây lát.' }
   }
 
@@ -22,6 +25,7 @@ export async function registerForWorkshop(workshopId: string) {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
+      console.log('[registerForWorkshop] ❌ EARLY RETURN: no user')
       return { error: 'Vui lòng đăng nhập để đăng ký workshop' }
     }
 
@@ -32,8 +36,11 @@ export async function registerForWorkshop(workshopId: string) {
       .eq('workshop_id', workshopId)
       .single()
 
+    console.log('[registerForWorkshop] existingReg:', existingReg ? `id=${existingReg.id} status=${existingReg.status}` : 'NULL (new registration)')
+
     if (existingReg) {
       if (existingReg.status === 'cancelled') {
+        console.log('[registerForWorkshop] Re-registering from cancelled state...')
         const { data: workshop } = await supabase
           .from('workshops')
           .select('fee, capacity, confirmed_count, is_published, start_time, registration_deadline')
@@ -75,11 +82,13 @@ export async function registerForWorkshop(workshopId: string) {
         revalidatePath('/dashboard/registrations')
         revalidatePath(`/workshops/${workshopId}`)
 
+        console.log('[registerForWorkshop] ❌ EARLY RETURN: re-registration path (no email push here!)')
         if (isFreeWorkshop) {
           return { success: true, message: 'Đăng ký lại thành công! Kiểm tra email để xem mã QR.' }
         }
         return { success: true, message: 'Đăng ký lại thành công! Vui lòng thanh toán để xác nhận.' }
       }
+      console.log('[registerForWorkshop] ❌ EARLY RETURN: already registered')
       return { error: 'Bạn đã đăng ký workshop này rồi' }
     }
 
@@ -133,6 +142,8 @@ export async function registerForWorkshop(workshopId: string) {
     revalidatePath('/dashboard/registrations')
     revalidatePath(`/workshops/${workshopId}`)
 
+    console.log('[Registration] isFreeWorkshop:', isFreeWorkshop, '| registration.qr_code:', registration.qr_code)
+
     if (isFreeWorkshop) {
       try {
         const { data: userData } = await supabase
@@ -147,11 +158,15 @@ export async function registerForWorkshop(workshopId: string) {
           .eq('id', workshopId)
           .single()
 
-        if (userData && workshopData && registration.qr_code) {
-          const qrCodeUrl = await getOrCreateQRCodeUrl(registration.id, registration.qr_code)
+        console.log('[Registration] userData:', userData ? 'OK' : 'NULL', '| workshopData:', workshopData ? 'OK' : 'NULL', '| qr_code:', registration.qr_code || 'NULL')
 
-          // Generate QR buffer for inline email attachment
+        if (userData && workshopData && registration.qr_code) {
+          console.log('[Registration] Generating QR code URL and buffer...')
+          const qrCodeUrl = await getOrCreateQRCodeUrl(registration.id, registration.qr_code)
+          console.log('[Registration] qrCodeUrl:', qrCodeUrl || 'NULL')
+
           const qrBuffer = await generateQRCodeBuffer(registration.qr_code)
+          console.log('[Registration] qrBuffer:', qrBuffer ? `${qrBuffer.length} bytes` : 'NULL')
 
           const startTime = new Date(workshopData.start_time)
           const workshopDate = startTime.toLocaleDateString('vi-VN', {
@@ -165,8 +180,10 @@ export async function registerForWorkshop(workshopId: string) {
             minute: '2-digit'
           })
 
+          console.log('[Registration] Connecting to RabbitMQ...')
           const rabbit = RabbitMQProvider.getInstance();
           const channel = await rabbit.getChannel();
+          console.log('[Registration] RabbitMQ channel obtained')
 
           const message = {
             type: 'registration_confirmation',
@@ -178,7 +195,7 @@ export async function registerForWorkshop(workshopId: string) {
               workshopTime,
               roomName: workshopData.room_name || 'TBD',
               qrCodeDataUrl: qrCodeUrl,
-              qrCodeBuffer: qrBuffer.toString('base64'), // serialize for RabbitMQ
+              qrCodeBuffer: qrBuffer.toString('base64'),
             }
           };
 
@@ -187,23 +204,25 @@ export async function registerForWorkshop(workshopId: string) {
             persistent: true
           });
 
-          console.log('[Registration] Email job pushed to RabbitMQ');
+          console.log('[Registration] ✅ Email job pushed to RabbitMQ for', userData.email);
 
           await createNotification({
             userId: user.id,
             type: 'registration',
             title: 'Dang ky thanh cong',
             message: `Ban da dang ky thanh cong workshop "${workshopData.title}". Ma QR check-in da duoc gui qua email.`,
-            channel: 'in_app',
+            channel: 'app',
             metadata: {
               workshop_id: workshopId,
               registration_id: registration.id,
               workshop_title: workshopData.title,
             }
           })
+        } else {
+          console.warn('[Registration] ⚠️ Skipped email: missing userData, workshopData, or qr_code')
         }
       } catch (emailError) {
-        console.error('[Registration Email Error]', emailError)
+        console.error('[Registration Email Error] ❌ Failed to generate/push email:', emailError)
       }
 
       return { success: true, message: 'Dang ky thanh cong! Kiem tra email de xem ma QR check-in.' }
@@ -463,7 +482,7 @@ export async function updateRegistrationStatus(
           type: 'registration',
           title: 'Dang ky da duoc xac nhan',
           message: `Dang ky workshop "${workshopData.title}" da duoc xac nhan. Ma QR check-in da duoc gui qua email.`,
-          channel: 'in_app',
+          channel: 'app',
           metadata: {
             workshop_id: registration.workshop_id,
             registration_id: registrationId,
