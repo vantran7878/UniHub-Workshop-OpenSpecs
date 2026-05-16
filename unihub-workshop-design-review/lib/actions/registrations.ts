@@ -315,7 +315,7 @@ export async function cancelRegistration(registrationId: string, reason?: string
         type: 'cancellation',
         title: 'Da huy dang ky',
         message: `Ban da huy dang ky workshop "${workshopData.title}".`,
-        channel: 'in_app',
+        channel: 'app',
         metadata: {
           workshop_id: registration.workshop_id,
           registration_id: registrationId,
