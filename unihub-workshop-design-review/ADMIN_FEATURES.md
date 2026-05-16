@@ -59,26 +59,21 @@ Admin Dashboard có các mục sau trong sidebar:
 - Sinh viên có thể thay đổi password sau lần đầu tiên đăng nhập
 
 ### 7. **AI Summary** (`/admin/ai-summary`)
-**Tóm tắt thông tin hệ thống bằng AI:**
+**Tạo mô tả Workshop bằng AI từ file PDF:**
 
-1. **Chọn kỳ thống kê**:
-   - Tuần này (7 ngày gần đây)
-   - Tháng này (30 ngày gần đây)
-   - Toàn bộ (từ đầu)
+1. **Chọn Workshop**: Chọn workshop bạn muốn cập nhật mô tả.
+2. **Upload PDF**: Tải lên file PDF nội dung chi tiết của workshop đó.
+3. **Click "Tóm tắt bằng AI"**:
+   - Hệ thống sẽ đọc nội dung PDF.
+   - AI sẽ tạo một bản tóm tắt chuyên nghiệp (200-300 từ) bằng tiếng Việt.
+4. **Xem kết quả & Lưu**:
+   - Xem bản Preview do AI tạo ra.
+   - Click "Lưu mô tả" để cập nhật trực tiếp vào thông tin workshop.
 
-2. **Click "Tạo tóm tắt AI"**:
-   - Hệ thống sẽ phân tích dữ liệu
-   - AI sẽ tạo report chi tiết bằng tiếng Việt
-
-3. **Xem kết quả**:
-   - **Statistics**: Thống kê (Workshops, Registrations, Revenue, Check-ins, etc.)
-   - **AI Summary**: Phân tích chi tiết, insights, recommendations
-
-**Nội dung AI Summary bao gồm**:
-- Đánh giá hiệu suất chung
-- Những thành tích chính
-- Các lĩnh vực cần cải thiện
-- Khuyến nghị cho bước tiếp theo
+**Lợi ích**:
+- Tiết kiệm thời gian soạn thảo mô tả.
+- Đảm bảo thông tin workshop đầy đủ và chuyên nghiệp.
+- Đồng bộ tự động lên cả Web và Mobile.
 
 ---
 
@@ -98,11 +93,7 @@ SUPABASE_SERVICE_KEY=your_service_key_here
 
 ### AI Summary
 
-**Tuỳ chọn 1: Sử dụng Basic Summary (không cần API key)**
-- Hệ thống sẽ hiển thị thống kê cơ bản
-- Không cần cấu hình gì thêm
-
-**Tuỳ chọn 2: Sử dụng AI Enhanced Summary**
+**Sử dụng AI Workshop Description**
 
 Cần thêm vào `.env.local`:
 ```env
@@ -136,8 +127,7 @@ OPENAI_API_KEY=your_openai_api_key_here
 - **Thiết lập nhanh**: Sử dụng Import Students để thêm hàng chục students cùng lúc
 - **Gửi Email**: Admin có thể xác nhận registrations → Email tự động gửi
 - **QR Code Check-in**: Mỗi registration có QR code riêng
-- **AI Analytics**: Sử dụng AI Summary để tạo monthly reports tự động
-- **Export Data**: (Tính năng sắp tới) Xuất dữ liệu registrations ra CSV/Excel
+- **AI Workshop Description**: Sử dụng AI để tạo mô tả workshop từ file PDF một cách nhanh chóng.
 
 ---
 

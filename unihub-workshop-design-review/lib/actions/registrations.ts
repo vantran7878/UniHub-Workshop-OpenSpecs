@@ -19,17 +19,11 @@ export async function registerForWorkshop(workshopId: string) {
 
   try {
     const supabase = await createClient()
-// ...
     const { data: { user } } = await supabase.auth.getUser()
-// ...
     if (!user) {
       return { error: 'Vui lòng đăng nhập để đăng ký workshop' }
     }
-
-    // Check if already registered
-// ...
     const { data: existingReg } = await supabase
-// ...
       .from('registrations')
       .select('id, status')
       .eq('user_id', user.id)
@@ -37,7 +31,6 @@ export async function registerForWorkshop(workshopId: string) {
       .single()
 
     if (existingReg) {
-// ...
       if (existingReg.status === 'cancelled') {
         // Check workshop info for re-registration
         const { data: workshop } = await supabase
@@ -51,8 +44,8 @@ export async function registerForWorkshop(workshopId: string) {
         }
 
         // Check deadline
-        const deadline = workshop.registration_deadline 
-          ? new Date(workshop.registration_deadline) 
+        const deadline = workshop.registration_deadline
+          ? new Date(workshop.registration_deadline)
           : new Date(workshop.start_time)
         if (new Date() > deadline) {
           return { error: 'Đã hết hạn đăng ký' }
@@ -64,11 +57,11 @@ export async function registerForWorkshop(workshopId: string) {
         }
 
         const isFreeWorkshop = workshop.fee === 0
-        
+
         // Re-activate cancelled registration
         const { error } = await supabase
           .from('registrations')
-          .update({ 
+          .update({
             status: isFreeWorkshop ? 'confirmed' : 'pending',
             cancelled_at: null,
             cancel_reason: null,
@@ -83,7 +76,7 @@ export async function registerForWorkshop(workshopId: string) {
 
         revalidatePath('/dashboard/registrations')
         revalidatePath(`/workshops/${workshopId}`)
-        
+
         if (isFreeWorkshop) {
           return { success: true, message: 'Đăng ký lại thành công! Kiểm tra email để xem mã QR.' }
         }
@@ -108,10 +101,10 @@ export async function registerForWorkshop(workshopId: string) {
     }
 
     // Check registration deadline
-    const deadline = workshop.registration_deadline 
-      ? new Date(workshop.registration_deadline) 
+    const deadline = workshop.registration_deadline
+      ? new Date(workshop.registration_deadline)
       : new Date(workshop.start_time)
-    
+
     if (new Date() > deadline) {
       return { error: 'Đã hết hạn đăng ký' }
     }
@@ -120,129 +113,129 @@ export async function registerForWorkshop(workshopId: string) {
     if (workshop.confirmed_count >= workshop.capacity) {
       return { error: 'Workshop đã hết chỗ' }
     }
-// ...
+    // ...
 
-  // Create registration
-  const isFreeWorkshop = workshop.fee === 0
+    // Create registration
+    const isFreeWorkshop = workshop.fee === 0
 
-  const { data: registration, error: regError } = await supabase
-    .from('registrations')
-    .insert({
-      user_id: user.id,
-      workshop_id: workshopId,
-      status: isFreeWorkshop ? 'confirmed' : 'pending',
-      qr_code: isFreeWorkshop ? uuidv4() : null,
-      confirmed_at: isFreeWorkshop ? new Date().toISOString() : null
-    })
-    .select()
-    .single()
+    const { data: registration, error: regError } = await supabase
+      .from('registrations')
+      .insert({
+        user_id: user.id,
+        workshop_id: workshopId,
+        status: isFreeWorkshop ? 'confirmed' : 'pending',
+        qr_code: isFreeWorkshop ? uuidv4() : null,
+        confirmed_at: isFreeWorkshop ? new Date().toISOString() : null
+      })
+      .select()
+      .single()
 
-  if (regError) {
-    // Handle unique constraint violation (race condition)
-    if (regError.code === '23505') {
-      return { error: 'Bạn đã đăng ký workshop này rồi' }
-    }
-    return { error: regError.message }
-  }
-
-  revalidatePath('/dashboard/registrations')
-  revalidatePath(`/workshops/${workshopId}`)
-  
-  if (isFreeWorkshop) {
-    // Send confirmation email with QR code
-    try {
-      const { data: userData } = await supabase
-        .from('users')
-        .select('full_name, email')
-        .eq('id', user.id)
-        .single()
-
-      const { data: workshopData } = await supabase
-        .from('workshops')
-        .select('title, start_time, room_name')
-        .eq('id', workshopId)
-        .single()
-
-      if (userData && workshopData && registration.qr_code) {
-        // Generate and upload QR code to Supabase Storage
-        const qrResult = await generateAndUploadQRCode(registration.id, registration.qr_code)
-        
-        const startTime = new Date(workshopData.start_time)
-        const workshopDate = startTime.toLocaleDateString('vi-VN', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric'
-        })
-        const workshopTime = startTime.toLocaleTimeString('vi-VN', {
-          hour: '2-digit',
-          minute: '2-digit'
-        })
-
-        // Send email with QR code URL via RabbitMQ
-        if (qrResult.url) {
-          const rabbit = RabbitMQProvider.getInstance();
-          const channel = await rabbit.getChannel();
-          
-          const message = {
-            type: 'registration_confirmation',
-            payload: {
-              studentEmail: userData.email,
-              studentName: userData.full_name,
-              workshopTitle: workshopData.title,
-              workshopDate,
-              workshopTime,
-              roomName: workshopData.room_name || 'TBD',
-              qrCodeDataUrl: qrResult.url
-            }
-          };
-
-          await channel.assertExchange('unihub_events', 'direct', { durable: true });
-          channel.publish('unihub_events', 'email_job', Buffer.from(JSON.stringify(message)), {
-            persistent: true
-          });
-
-          console.log('[Registration] Email job pushed to RabbitMQ');
-        }
-
-        // Create notification
-        await createNotification({
-          userId: user.id,
-          type: 'registration',
-          title: 'Dang ky thanh cong',
-          message: `Ban da dang ky thanh cong workshop "${workshopData.title}". Ma QR check-in da duoc gui qua email.`,
-          channel: 'in_app',
-          metadata: {
-            workshop_id: workshopId,
-            registration_id: registration.id,
-            workshop_title: workshopData.title,
-          }
-        })
+    if (regError) {
+      // Handle unique constraint violation (race condition)
+      if (regError.code === '23505') {
+        return { error: 'Bạn đã đăng ký workshop này rồi' }
       }
-    } catch (emailError) {
-      console.error('[Registration Email Error]', emailError)
-      // Don't fail registration if email fails
+      return { error: regError.message }
     }
 
-    return { success: true, message: 'Dang ky thanh cong! Kiem tra email de xem ma QR check-in.' }
+    revalidatePath('/dashboard/registrations')
+    revalidatePath(`/workshops/${workshopId}`)
+
+    if (isFreeWorkshop) {
+      // Send confirmation email with QR code
+      try {
+        const { data: userData } = await supabase
+          .from('users')
+          .select('full_name, email')
+          .eq('id', user.id)
+          .single()
+
+        const { data: workshopData } = await supabase
+          .from('workshops')
+          .select('title, start_time, room_name')
+          .eq('id', workshopId)
+          .single()
+
+        if (userData && workshopData && registration.qr_code) {
+          // Generate and upload QR code to Supabase Storage
+          const qrResult = await generateAndUploadQRCode(registration.id, registration.qr_code)
+
+          const startTime = new Date(workshopData.start_time)
+          const workshopDate = startTime.toLocaleDateString('vi-VN', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          })
+          const workshopTime = startTime.toLocaleTimeString('vi-VN', {
+            hour: '2-digit',
+            minute: '2-digit'
+          })
+
+          // Send email with QR code URL via RabbitMQ
+          if (qrResult.url) {
+            const rabbit = RabbitMQProvider.getInstance();
+            const channel = await rabbit.getChannel();
+
+            const message = {
+              type: 'registration_confirmation',
+              payload: {
+                studentEmail: userData.email,
+                studentName: userData.full_name,
+                workshopTitle: workshopData.title,
+                workshopDate,
+                workshopTime,
+                roomName: workshopData.room_name || 'TBD',
+                qrCodeDataUrl: qrResult.url
+              }
+            };
+
+            await channel.assertExchange('unihub_events', 'direct', { durable: true });
+            channel.publish('unihub_events', 'email_job', Buffer.from(JSON.stringify(message)), {
+              persistent: true
+            });
+
+            console.log('[Registration] Email job pushed to RabbitMQ');
+          }
+
+          // Create notification
+          await createNotification({
+            userId: user.id,
+            type: 'registration',
+            title: 'Dang ky thanh cong',
+            message: `Ban da dang ky thanh cong workshop "${workshopData.title}". Ma QR check-in da duoc gui qua email.`,
+            channel: 'in_app',
+            metadata: {
+              workshop_id: workshopId,
+              registration_id: registration.id,
+              workshop_title: workshopData.title,
+            }
+          })
+        }
+      } catch (emailError) {
+        console.error('[Registration Email Error]', emailError)
+        // Don't fail registration if email fails
+      }
+
+      return { success: true, message: 'Dang ky thanh cong! Kiem tra email de xem ma QR check-in.' }
+    }
+    return {
+      success: true,
+      message: 'Đăng ký thành công! Vui lòng thanh toán để xác nhận.',
+      registrationId: registration.id,
+      requiresPayment: true,
+      amount: workshop.fee
+    }
   } finally {
     await DistributedLock.release(resource, lockToken)
-  }
-  
-  return { 
-    success: true, 
-    message: 'Đăng ký thành công! Vui lòng thanh toán để xác nhận.',
-    registrationId: registration.id,
-    requiresPayment: true,
-    amount: workshop.fee
   }
 }
 
 export async function cancelRegistration(registrationId: string, reason?: string) {
   const supabase = await createClient()
-  
+
   const { data: { user } } = await supabase.auth.getUser()
-  
+
   if (!user) {
     return { error: 'Chưa đăng nhập' }
   }
@@ -287,31 +280,31 @@ export async function cancelRegistration(registrationId: string, reason?: string
       .eq('id', registration.workshop_id)
       .single()
 
-      if (workshopData) {
-        // Push cancellation email job to RabbitMQ
-        try {
-          const rabbit = RabbitMQProvider.getInstance();
-          const channel = await rabbit.getChannel();
-          
-          const message = {
-            type: 'cancellation_confirmation',
-            payload: {
-              studentEmail: user.email,
-              workshopTitle: workshopData.title,
-              cancelReason: reason || 'Hủy bởi người dùng'
-            }
-          };
+    if (workshopData) {
+      // Push cancellation email job to RabbitMQ
+      try {
+        const rabbit = RabbitMQProvider.getInstance();
+        const channel = await rabbit.getChannel();
 
-          await channel.assertExchange('unihub_events', 'direct', { durable: true });
-          channel.publish('unihub_events', 'email_job', Buffer.from(JSON.stringify(message)), {
-            persistent: true
-          });
-          console.log('[Cancellation] Email job pushed to RabbitMQ');
-        } catch (rabbitErr) {
-          console.error('[RabbitMQ Push Error] Cancellation:', rabbitErr);
-        }
+        const message = {
+          type: 'cancellation_confirmation',
+          payload: {
+            studentEmail: user.email,
+            workshopTitle: workshopData.title,
+            cancelReason: reason || 'Hủy bởi người dùng'
+          }
+        };
 
-        await createNotification({
+        await channel.assertExchange('unihub_events', 'direct', { durable: true });
+        channel.publish('unihub_events', 'email_job', Buffer.from(JSON.stringify(message)), {
+          persistent: true
+        });
+        console.log('[Cancellation] Email job pushed to RabbitMQ');
+      } catch (rabbitErr) {
+        console.error('[RabbitMQ Push Error] Cancellation:', rabbitErr);
+      }
+
+      await createNotification({
         userId: user.id,
         type: 'cancellation',
         title: 'Da huy dang ky',
@@ -335,9 +328,9 @@ export async function cancelRegistration(registrationId: string, reason?: string
 
 export async function getMyRegistrations() {
   const supabase = await createClient()
-  
+
   const { data: { user } } = await supabase.auth.getUser()
-  
+
   if (!user) {
     return { error: 'Chưa đăng nhập', data: [] }
   }
@@ -399,7 +392,7 @@ export async function getWorkshopRegistrations(workshopId: string) {
 
 // Admin/Staff: Update registration status
 export async function updateRegistrationStatus(
-  registrationId: string, 
+  registrationId: string,
   status: 'pending' | 'confirmed' | 'cancelled',
   qrCode?: string
 ) {

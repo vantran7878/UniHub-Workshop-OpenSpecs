@@ -1,28 +1,41 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { PDFParse } from 'pdf-parse'
+import { generateText } from 'ai'
+import { aiModel } from '@/lib/ai'
 
 export async function summarizeWorkshopPDF(workshopId: string, pdfFile: File) {
   try {
-    const formData = new FormData()
-    formData.append('file', pdfFile)
-    formData.append('workshopId', workshopId)
+    // 1. Read file content
+    const arrayBuffer = await pdfFile.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
 
-    const response = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/admin/summarize-pdf`, {
-      method: 'POST',
-      body: formData,
-    })
+    // 2. Parse PDF using the new PDFParse v2 API
+    const parser = new PDFParse({ data: buffer })
+    const result = await parser.getText()
+    const text = result.text
 
-    const result = await response.json()
-
-    if (!response.ok) {
-      return {
-        success: false,
-        error: result.error || 'Lỗi khi xử lý PDF',
-      }
+    if (!text || text.trim().length === 0) {
+      return { success: false, error: 'Không thể đọc được nội dung từ file PDF này.' }
     }
 
-    return result
+    // 3. Generate AI Summary
+    const { text: aiSummary } = await generateText({
+      model: aiModel,
+      prompt: `Đọc nội dung PDF sau đây về một workshop và tạo một mô tả ngắn gọn, chuyên nghiệp (200-300 từ) bằng tiếng Việt.
+      
+      PDF Content:
+      ${text.substring(0, 5000)}
+      
+      Chỉ trả về nội dung mô tả.`,
+      maxOutputTokens: 500,
+    })
+
+    return {
+      success: true,
+      summary: aiSummary,
+    }
   } catch (error) {
     console.error('[PDF Summary Error]', error)
     return {
@@ -39,7 +52,10 @@ export async function updateWorkshopDescription(workshopId: string, description:
 
     const { error } = await supabase
       .from('workshops')
-      .update({ description })
+      .update({
+        description: description,
+        ai_summary: description // Update both fields for compatibility
+      })
       .eq('id', workshopId)
 
     if (error) {

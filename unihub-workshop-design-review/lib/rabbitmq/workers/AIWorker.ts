@@ -1,8 +1,8 @@
 import { BaseWorker } from '../BaseWorker';
 import { supabaseServiceRole } from '@/lib/supabase/service-role';
-import pdfParse from 'pdf-parse';
+import { PDFParse } from 'pdf-parse';
 import { generateText } from 'ai';
-import { openai } from '@ai-sdk/openai';
+import { aiModel } from '@/lib/ai';
 
 export class AIWorker extends BaseWorker {
   protected queueName = 'ai_summary_queue';
@@ -25,11 +25,12 @@ export class AIWorker extends BaseWorker {
         throw new Error(`Failed to download file: ${downloadError?.message}`);
       }
 
-      // 2. Parse PDF
+      // 2. Parse PDF using the new PDFParse v2 API
       const arrayBuffer = await fileData.arrayBuffer();
       const pdfBuffer = Buffer.from(arrayBuffer);
-      const parsedPdf = await pdfParse(pdfBuffer);
-      const pdfText = parsedPdf.text;
+      const parser = new PDFParse({ data: pdfBuffer });
+      const result = await parser.getText();
+      const pdfText = result.text;
 
       if (!pdfText || pdfText.trim().length === 0) {
         throw new Error('PDF content is empty');
@@ -37,20 +38,23 @@ export class AIWorker extends BaseWorker {
 
       // 3. Generate AI Summary
       const { text: aiSummary } = await generateText({
-        model: openai('gpt-4o-mini'),
+        model: aiModel,
         prompt: `Đọc nội dung PDF sau đây về một workshop và tạo một mô tả ngắn gọn, chuyên nghiệp (200-300 từ) bằng tiếng Việt.
         
         PDF Content:
         ${pdfText.substring(0, 5000)}
         
         Chỉ trả về nội dung mô tả.`,
-        maxTokens: 500,
+        maxOutputTokens: 500,
       });
 
       // 4. Update Database
       const { error: updateError } = await supabaseServiceRole
         .from('workshops')
-        .update({ description: aiSummary })
+        .update({
+          description: aiSummary,
+          ai_summary: aiSummary // Update both fields
+        })
         .eq('id', workshopId);
 
       if (updateError) {
