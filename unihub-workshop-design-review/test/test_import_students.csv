@@ -1,4 +1,7 @@
 email,full_name,student_id,phone,faculty,role
-test_student_1@example.com,Nguyen Van A,SV001,0123456789,CNTT,student
-test_student_2@example.com,Tran Thi B,SV002,0987654321,Kinh Te,student
-test_student_3@example.com,Le Van C,SV003,0333444555,Luat,student
+student_16@example.com,Madison Castillo,SV116,0714069159,Công nghệ thông tin,student
+student_17@example.com,Ricky Mcdowell,SV117,0434691649,Công nghệ thông tin,student
+student_18@example.com,Philip Johnson,SV118,0462567915,Công nghệ thông tin,student
+student_19@example.com,Christopher Graham,SV119,0635038827,Công nghệ thông tin,student
+student_20@example.com,Tara Cameron,SV120,0702284302,Công nghệ thông tin,student
+student_21@example.com,Valerie Mercer,SV121,0422561337,Công nghệ thông tin,student

@@ -1,0 +1,11 @@
+- Admin account:
+    - Email: trancaovan0701@gmail.com
+    - Password: 123123
+
+- Staff account:
+    - Email: yunetrea@gmail.com
+    - Password: 123456
+
+- Student account: 
+    - Email: tcvan23@clc.fitus.edu.vn
+    - Password: 123123
